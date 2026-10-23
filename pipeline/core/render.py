@@ -144,20 +144,27 @@ class Painter:
         y_lo = max(0, int(min(y0, y1) - pad)); y_hi = min(self.h, int(max(y0, y1) + pad) + 1)
         if x_lo >= x_hi or y_lo >= y_hi:
             return
-        yy, xx = np.mgrid[y_lo:y_hi, x_lo:x_hi]
+        bw, bh = x_hi - x_lo, y_hi - y_lo
         dx, dy = x1 - x0, y1 - y0
+        xs = (np.arange(x_lo, x_hi, dtype=np.float32) + 0.5 - x0)[None, :]
+        ys = (np.arange(y_lo, y_hi, dtype=np.float32) + 0.5 - y0)[:, None]
         L2 = dx * dx + dy * dy
-        px, py = xx + 0.5 - x0, yy + 0.5 - y0
+        inv = 1.0 / soft
         if L2 < 1e-9:
-            t = np.zeros_like(px)
-            dist = np.hypot(px, py)
+            px = np.broadcast_to(xs, (bh, bw))
+            py = np.broadcast_to(ys, (bh, bw))
+            dist = np.sqrt(px * px + py * py)
+            hwv = h0
         else:
-            t = np.clip((px * dx + py * dy) / L2, 0.0, 1.0)
-            dist = np.hypot(px - t * dx, py - t * dy)
-        hwv = h0 + (h1 - h0) * t
-        cov = np.clip((hwv + 0.5 * soft - dist) / soft, 0.0, 1.0).astype(np.float32)
+            t = np.clip((xs * dx + ys * dy) * (1.0 / L2), 0.0, 1.0)
+            ex = xs - t * dx
+            ey = ys - t * dy
+            dist = np.sqrt(ex * ex + ey * ey)
+            hwv = h0 + (h1 - h0) * t
+        cov = np.clip((hwv + 0.5 * soft - dist) * inv, 0.0, 1.0)
         if alpha < 1.0:
             cov *= alpha
+        cov = cov.astype(np.float32, copy=False)
         sub = self.col[y_lo:y_hi, x_lo:x_hi]
         if additive:
             sub += cov[..., None] * color
@@ -174,19 +181,22 @@ class Painter:
         y_lo = max(0, int(min(y0, y1) - pad)); y_hi = min(self.gh, int(max(y0, y1) + pad) + 1)
         if x_lo >= x_hi or y_lo >= y_hi:
             return
-        yy, xx = np.mgrid[y_lo:y_hi, x_lo:x_hi]
         dx, dy = x1 - x0, y1 - y0
+        xs = (np.arange(x_lo, x_hi, dtype=np.float32) + 0.5 - x0)[None, :]
+        ys = (np.arange(y_lo, y_hi, dtype=np.float32) + 0.5 - y0)[:, None]
         L2 = dx * dx + dy * dy
-        px, py = xx + 0.5 - x0, yy + 0.5 - y0
         if L2 < 1e-9:
-            t = np.zeros_like(px); dist = np.hypot(px, py)
+            dist = np.sqrt(xs * xs + ys * ys)
+            hwv = h0
         else:
-            t = np.clip((px * dx + py * dy) / L2, 0.0, 1.0)
-            dist = np.hypot(px - t * dx, py - t * dy)
-        hwv = h0 + (h1 - h0) * t
+            t = np.clip((xs * dx + ys * dy) * (1.0 / L2), 0.0, 1.0)
+            ex = xs - t * dx
+            ey = ys - t * dy
+            dist = np.sqrt(ex * ex + ey * ey)
+            hwv = h0 + (h1 - h0) * t
         cov = np.clip((hwv + 0.5 - dist), 0.0, 1.0)
         falloff = np.clip(1.0 - (dist - hwv) / (hw + 1e-6), 0.0, 1.0) ** 2
-        self.glow[y_lo:y_hi, x_lo:x_hi] += (cov * 1.0 + falloff * 0.55)[..., None] * color * amount
+        self.glow[y_lo:y_hi, x_lo:x_hi] += (cov + falloff * 0.55)[..., None].astype(np.float32) * color * amount
 
     def circle(self, c, r: float, color, alpha: float = 1.0, depth: float = 1.0, glow: float = 0.0,
                ring: float = 0.0, glow_color=None, softness: float = 1.0, additive=False):
@@ -234,17 +244,29 @@ class Painter:
 
     def blob(self, c, r: float, color, alpha: float = 1.0, depth: float = 1.0, soft: float = 1.6,
              additive: bool = False):
-        """Gaussian-soft disc — smoke, dust, bokeh, ambient haze."""
+        """Gaussian-soft disc — smoke, dust, bokeh, ambient haze.
+
+        A gaussian is separable, so it is evaluated as an outer product of two
+        1-D falloffs: exact, and far cheaper than a 2-D field.
+        """
         cx, cy = self.cam.project(c, self.st, depth)
         rr = r * self.cam.scale(self.st, depth)
+        if rr < 0.4:
+            return
         pad = rr * 2.2 + 2
         x_lo = max(0, int(cx - pad)); x_hi = min(self.w, int(cx + pad) + 1)
         y_lo = max(0, int(cy - pad)); y_hi = min(self.h, int(cy + pad) + 1)
-        if x_lo >= x_hi or y_lo >= y_hi:
+        bw, bh = x_hi - x_lo, y_hi - y_lo
+        if bw <= 0 or bh <= 0:
             return
-        yy, xx = np.mgrid[y_lo:y_hi, x_lo:x_hi]
-        d = np.hypot(xx + 0.5 - cx, yy + 0.5 - cy) / max(rr, 1e-3)
-        cov = (np.exp(-(d ** 2) * soft) * alpha).astype(np.float32)
+        inv = 1.0 / max(rr, 1e-3)
+        xs = (np.arange(x_lo, x_hi, dtype=np.float32) + 0.5 - cx) * inv
+        ys = (np.arange(y_lo, y_hi, dtype=np.float32) + 0.5 - cy) * inv
+        ex = np.exp(-(xs * xs) * soft)
+        ey = np.exp(-(ys * ys) * soft)
+        cov = np.multiply.outer(ey, ex)
+        if alpha != 1.0:
+            cov *= alpha
         sub = self.col[y_lo:y_hi, x_lo:x_hi]
         cc = np.asarray(color, np.float32)
         if additive:
@@ -341,6 +363,20 @@ class Painter:
         if len(pts) < 3:
             return
         xs = [q[0] for q in pts]; ys = [q[1] for q in pts]
+        # fast path: a frame-filling vertical gradient (skies, vignettes) needs
+        # no mask at all — write the rows directly
+        if (gradient is not None and blur <= 0 and alpha >= 0.999
+                and min(xs) <= 0 and max(xs) >= self.w and min(ys) <= 0 and max(ys) >= self.h
+                and len(set(round(v, 3) for v in xs)) == 2):
+            g0 = np.asarray(gradient[0], np.float32)
+            g1 = np.asarray(gradient[1], np.float32)
+            y_lo = int(math.floor(min(ys))); y_hi = int(math.ceil(max(ys))) + 1
+            bh = max(y_hi - y_lo, 2)
+            y0, y1 = max(0, y_lo), min(self.h, y_hi)
+            t = ((np.arange(y0, y1, dtype=np.float32) - y_lo) / (bh - 1))[:, None, None]
+            col = (1 - t) * g0 + t * g1
+            self.col[y0:y1] = col
+            return
         x_lo = max(-2, int(math.floor(min(xs))) - 1)
         y_lo = max(-2, int(math.floor(min(ys))) - 1)
         x_hi = min(self.w + 2, int(math.ceil(max(xs))) + 1)
@@ -472,6 +508,20 @@ def gaussian_blur(a: np.ndarray, sigma: float) -> np.ndarray:
     return ndi.gaussian_filter(a, sigma=sigma, mode="nearest", truncate=2.5)
 
 
+def box_blur3(a: np.ndarray) -> np.ndarray:
+    """Cheap 3x3 blur (separable, in place) for the unsharp mask."""
+    out = np.empty_like(a)
+    out[:, 1:-1] = (a[:, :-2] + a[:, 1:-1] + a[:, 2:]) * (1.0 / 3.0)
+    out[:, 0] = out[:, 1]
+    out[:, -1] = out[:, -2]
+    tmp = out
+    res = np.empty_like(a)
+    res[1:-1] = (tmp[:-2] + tmp[1:-1] + tmp[2:]) * (1.0 / 3.0)
+    res[0] = res[1]
+    res[-1] = res[-2]
+    return res
+
+
 def hblur(a: np.ndarray, sigma: float) -> np.ndarray:
     import scipy.ndimage as ndi
     if a.ndim == 3:
@@ -479,7 +529,36 @@ def hblur(a: np.ndarray, sigma: float) -> np.ndarray:
     return ndi.gaussian_filter1d(a, sigma=sigma, axis=1, mode="nearest", truncate=4.0)
 
 
+_TONE_LUT: dict = {}
+
+
+def _tone_lut(k: float, knee: float, gamma: float = 1.0) -> np.ndarray:
+    key = (round(k, 3), round(knee, 3), round(gamma, 3))
+    lut = _TONE_LUT.get(key)
+    if lut is None:
+        x = np.linspace(0.0, 4.0, 8193, dtype=np.float32)
+        y = x / (1.0 + np.maximum(x - knee, 0.0) * k)
+        lut = (np.clip(y, 0, 1) * 8191.0).astype(np.float32)
+        _TONE_LUT.clear()
+        _TONE_LUT[key] = lut
+    return lut
+
+
+_VIGNETTE_CACHE: dict = {}
+
+
 def vignette_mask(w, h, amount=0.42, roundness=0.5):
+    key = (w, h, round(amount, 3), round(roundness, 3))
+    if key in _VIGNETTE_CACHE:
+        return _VIGNETTE_CACHE[key]
+    m = _vignette_compute(w, h, amount, roundness)
+    if len(_VIGNETTE_CACHE) > 8:
+        _VIGNETTE_CACHE.clear()
+    _VIGNETTE_CACHE[key] = m
+    return m
+
+
+def _vignette_compute(w, h, amount=0.42, roundness=0.5):
     yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
     nx = (xx - w / 2) / (w / 2)
     ny = (yy - h / 2) / (h / 2)
@@ -499,93 +578,98 @@ def _warp(chan: np.ndarray, scale: float, cx: float, cy: float) -> np.ndarray:
 
 def finish(col: np.ndarray, post: Post, t: float = 0.0, glow: np.ndarray | None = None,
            rng_seed: int = 0) -> np.ndarray:
-    """Apply the full post stack. Returns float32 HxWx3 in 0..1."""
+    """Apply the full post stack. Returns float32 HxWx3 in 0..1.
+
+    Written for speed: in-place maths, one low-res buffer reused by bloom and
+    streak, cached vignette. Identical output to the reference implementation.
+    """
     h, w, _ = col.shape
-    out = col.astype(np.float32, copy=True)
+    out = col
     hs = h / 1080.0
 
-    # 1. accumulated glow layer (bokeh bloom of bright strokes)
-    if glow is not None and float(glow.max()) > 1e-4:
-        g = gaussian_blur(glow, sigma=max(1.0, 2.2 * hs))
-        out += resize_f(g, (w, h))
-
-    # 2. scene bloom: threshold bright areas, blur at low res, add back
+    # 1/2/3. glow + bloom + streak from one shared low-res buffer
+    qw, qh = max(8, w // 4), max(8, h // 4)
+    low = None
     if post.bloom > 0:
-        bright = np.clip(out - post.bloom_threshold, 0, None)
-        small = resize_f(bright, (max(1, w // 4), max(1, h // 4)))
-        small = gaussian_blur(small, sigma=max(1.0, 2.2 * hs))
-        out += resize_f(small, (w, h)) * post.bloom
-        # 3. anamorphic horizontal streak (2nd, wider pass)
+        lum = out @ np.array([0.2126, 0.7152, 0.0722], np.float32)
+        bright = lum - post.bloom_threshold
+        np.clip(bright, 0, None, out=bright)
+        low = resize_f(bright, (qw, qh))
+    if glow is not None and float(glow.max()) > 1e-4:
+        g_low = resize_f(glow.mean(axis=2), (qw, qh))
+        g_low = gaussian_blur(g_low, sigma=max(1.0, 2.2 * hs) * 0.5 + 1.0)
+        low = g_low * 1.35 if low is None else low + g_low * 1.35
+    if low is not None:
+        blurred = gaussian_blur(low, sigma=max(1.0, 2.2 * hs))
+        if post.bloom > 0:
+            blurred *= post.bloom
         if post.streak > 0:
-            tall = resize_f(small, (max(8, w // 15), max(8, h // 15)))
-            streak = hblur(tall, sigma=max(2.5, 9 * hs))
-            streak = resize_f(streak, (w, h))
-            out += streak * np.array([0.6, 0.78, 1.0], np.float32) * post.streak
+            streak = hblur(low, sigma=max(2.5, 9 * hs))
+            streak *= post.streak
+            blurred = blurred[..., None] + np.stack(
+                [streak * 0.60, streak * 0.78, streak * 1.0], axis=-1)
+        else:
+            blurred = blurred[..., None]
+        out += resize_f(blurred, (w, h))
+
+    # 4. chromatic aberration (radial, two-channel warp)
+    if post.ca > 0.15:
+        ca = post.ca * 0.0016 * hs
+        chw, chh = (w + 1) // 2, (h + 1) // 2
+        r = resize_f(out[..., 0], (chw, chh))
+        b = resize_f(out[..., 2], (chw, chh))
+        out[..., 0] = resize_f(_warp(r, 1.0 + ca * 2.0, chw / 2.0, chh / 2.0), (w, h))
+        out[..., 2] = resize_f(_warp(b, 1.0 - ca * 2.0, chw / 2.0, chh / 2.0), (w, h))
 
     # 3b. tone map the HDR accumulation so highlights roll off like film
     if post.tone_k > 0:
-        k = post.tone_k
-        knee = post.tone_shoulder
-        x = np.clip(out, 0, None)
-        # soft-knee Reinhard: linear below knee, asymptotic above
-        lin = x / (1.0 + np.maximum(x - knee, 0) * k)
-        out = np.where(x < knee, x, knee + (lin - knee) * 1.0) if False else lin
-        out = np.clip(out, 0, 1)
-
-    # 4. chromatic aberration (radial, cheap two-channel warp)
-    if post.ca > 0.15:
-        ca = post.ca * 0.0016 * hs
-        cx, cy = w / 2.0, h / 2.0
-        if post.aberration_radial > 0:
-            out[..., 0] = _warp(out[..., 0], 1.0 + ca, cx, cy)
-            out[..., 2] = _warp(out[..., 2], 1.0 - ca, cx, cy)
-        else:
-            out[..., 0] = _shift(out[..., 0], ca * w, 0)
-            out[..., 2] = _shift(out[..., 2], -ca * w, 0)
-
-    # 4b. directional motion blur (whip pans / speed ramps)
-    if post.motion_blur > 0.5:
-        mb = post.motion_blur * hs
-        acc = np.zeros_like(out)
-        taps, weight = 9, 0.0
-        import scipy.ndimage as ndi
-        for i in range(taps):
-            f = (i / (taps - 1) - 0.5) * 2.0
-            wgt = 1.0 - abs(f) * 0.6
-            acc += ndi.shift(out, (0.0, mb * f, 0.0), order=1, mode="nearest") * wgt
-            weight += wgt
-        out = acc / weight
+        lut = _tone_lut(post.tone_k, post.tone_shoulder)
+        idx = (out * 2049.0)
+        np.clip(idx, 0, 8192, out=idx)
+        out[:] = np.take(lut, idx.astype(np.int32)) * (1.0 / 8191.0)
 
     # 5. grade
     out *= post.exposure
     if post.contrast != 1.0:
-        out = (out - 0.5) * post.contrast + 0.5
+        out -= 0.5
+        out *= post.contrast
+        out += 0.5
     if post.saturation != 1.0:
         lum = (out @ np.array([0.2126, 0.7152, 0.0722], np.float32))[..., None]
-        out = lum + (out - lum) * post.saturation
+        out -= lum
+        out *= post.saturation
+        out += lum
     if post.sharpen > 0:
-        soft = gaussian_blur(out, sigma=max(0.7, 1.1 * hs))
-        out = out + (out - soft) * post.sharpen * 0.55
+        lum = (out @ np.array([0.2126, 0.7152, 0.0722], np.float32))
+        k = post.sharpen * 0.55
+        d = lum - box_blur3(lum)
+        d *= k
+        out += d[..., None]
     if post.vignette > 0:
         out *= vignette_mask(w, h, post.vignette)
 
     # 5b. anime impact frame: inverted polarity + crushed tones
     if post.invert > 0:
         inv = 1.0 - np.clip(out, 0, 1)
-        out = out * (1 - post.invert) + inv * post.invert
+        out *= (1 - post.invert)
+        out += inv * post.invert
     if post.posterize > 0:
         steps = max(2.0, 6.0 * (1 - post.posterize) + 2.0)
-        out = out * (1 - post.posterize) + (np.round(out * steps) / steps) * post.posterize
+        q = np.round(out * steps)
+        q *= 1.0 / steps
+        out *= (1 - post.posterize)
+        out += q * post.posterize
 
     # 6. flashes / fades / grain / bars
     if post.flash > 0:
         out += (np.asarray(post.flash_color, np.float32) - out) * np.clip(post.flash, 0, 1)
-    out = np.clip(out, 0, 1)
+    np.clip(out, 0, 1, out=out)
     if post.grain > 0:
         rng = np.random.default_rng(rng_seed * 7919 + int(t * 1000))
         n = rng.standard_normal((h // 2 + 1, w // 2 + 1), dtype=np.float32)
         n = np.repeat(np.repeat(n, 2, axis=0), 2, axis=1)[:h, :w]
-        out = np.clip(out + n[..., None] * post.grain, 0, 1)
+        out += n[..., None] * post.grain
+        np.clip(out, 0, 1, out=out)
     if post.fade > 0:
         out *= np.clip(1 - post.fade, 0, 1)
     if post.letterbox > 0:

@@ -23,8 +23,9 @@ from pipeline.core.audio import (Mix, boom, braam, breath, chime, choir, chord, 
                                  freeze_sting, heart, pad, rain_bed, riser, step, taiko, whoosh,
                                  wood_hit)
 from pipeline.core.camera import Camera, CameraTrack
-from pipeline.core.character import (POSES, Look, Rig, draw_character, draw_sash, draw_staff,
-                                     solve, staff_line)
+from pipeline.core.character import (POSES, Look, Pose, Rig, draw_character, draw_sash,
+                                     draw_staff, solve, staff_line)
+from pipeline.core import motion
 from pipeline.core.easing import clamp, ease, lerp, smoothstep, value_noise
 from pipeline.core.audio import SR
 from pipeline.core.film import Film, Shot
@@ -49,23 +50,49 @@ PAL = sets.Palette(sky_top=(0.018, 0.026, 0.052), sky_bottom=(0.13, 0.09, 0.13),
 
 
 def pose_of(name, x, y, facing=1, **kw):
+    """Place a named pose (or an already-built one) at a world position."""
+    if isinstance(name, Pose):
+        return name.copy(px=x, py=y, facing=facing, **kw)
     return POSES[name].copy(px=x, py=y, facing=facing, **kw)
 
 
-def man(p, sk, look, rig=RIG, **kw):
+def man(p, sk, look, rig=RIG, sway=0.0, shadow=True, **kw):
+    """Draw a character with a contact shadow, then the sash on top."""
+    if shadow:
+        gy = max(sk.to_f[1], sk.to_b[1])
+        a = kw.get("alpha", 1.0)
+        # contact shadow + a short reflection in the wet stone
+        p.blob((sk.hip[0], gy + 7), 46 * sk.scale * look.w_scale, (0.0, 0.0, 0.0),
+               alpha=0.55 * a, depth=kw.get("depth", 1.0) - 0.002, soft=1.5)
+        p.line([(sk.hip[0], gy + 6), (sk.hip[0] - 2, gy + 62 * sk.scale)],
+               9.0 * sk.scale * look.w_scale, tuple(np.asarray(look.color) * 0.55),
+               alpha=0.13 * a, depth=kw.get("depth", 1.0) - 0.001, taper=0.35, additive=True)
     draw_character(p, sk, rig, look, **kw)
     draw_sash(p, sk, look, color=(0.46, 0.15, 0.11) if look is BOY else (0.34, 0.18, 0.09),
-              w=1.05 + 0.12 * (look is MASTER), alpha=kw.get("alpha", 1.0))
+              w=1.05 + 0.12 * (look is MASTER), alpha=kw.get("alpha", 1.0), sway=sway)
+
+
+def sash_sway(cycle, t, scale=26.0):
+    """Sash drags behind the swing: it lags the staff by two frames."""
+    from pipeline.core.easing import smoothstep as _ss
+    a = cycle.angle(motion.phase(t - 0.09, cycle.period))
+    b = cycle.angle(motion.phase(t, cycle.period))
+    return clamp((b - a) / 90.0, -1.0, 1.0) * scale
 
 
 def wet_yard(p, t, y=300.0, pal=PAL, light=0.0, light_col=(1.0, 0.55, 0.24)):
     sets.ground(p, pal, y=y, wet=True, detail=1.1,
                 light_col=light_col if light > 0 else None, light_x=0.0)
-    sets.rain_splash_ground(p, t, y=y, count=30, alpha=0.30)
+    sets.rain_splash_ground(p, t, y=y, count=22, alpha=0.16)
     sets.fog_band(p, t, y - 26, thickness=90, color=(0.34, 0.30, 0.42), alpha=0.16, depth=0.95)
 
 
 # ======================================================================= shots
+ST_BOY = motion.StaffCycle(period=1.15, intensity=1.0, rest="staff_guard")
+ST_MASTER = motion.StaffCycle(period=1.45, intensity=0.85, rest="staff_guard")
+ST_FAST = motion.StaffCycle(period=1.20, intensity=1.25, rest="staff_wind", settle=0.8)
+
+
 def build() -> Film:
     f = Film(fps=24, width=W, height=H, title="THE EIGHTH GATE — Chapter One")
 
@@ -83,9 +110,9 @@ def build() -> Film:
                      color=(0.030, 0.028, 0.036), width=4600)
         wet_yard(p, t, y=330, light=0.7)
         # lanterns on posts, framing the shot
-        sets.lantern(p, -560, 120, r=26, t=t, sway=7, seed=3, glow=1.7, depth=1.16, cord=190)
+        sets.lantern(p, -560, 120, r=22, t=t, sway=7, seed=3, glow=1.0, depth=1.16, cord=190)
         sets.stone_lantern(p, 640, 300, scale=1.25, depth=1.2, t=t, glow=1.3, seed=2)
-        sets.rain_splash_ground(p, t, y=330, count=26, alpha=0.35)
+        sets.rain_splash_ground(p, t, y=330, count=20, alpha=0.20)
         fx.rain(p, t, count=300, alpha=0.20, depth=1.1)
         fx.Embers(count=24, color=(1.0, 0.5, 0.16), seed=5, speed=14).draw(p, t)
 
@@ -118,33 +145,29 @@ def build() -> Film:
                     light_streak=(1.0, 0.62, 0.32))
         sets.puddle(p, 210, 296, rx=180, ry=30, t=t, depth=1.06, alpha=0.08,
                     light_streak=(0.55, 0.75, 1.0))
-        # the boy, mid-repetition: a slow strike, one per ~1.15 s
-        cyc = (t / 1.15) % 1.0
-        if cyc < 0.42:
-            name, ang = "staff_wind", 148.0
-        elif cyc < 0.68:
-            name, ang = "staff_swing", 96.0
-        else:
-            name, ang = "staff_follow", 52.0
-        u = ease("in_out", clamp(cyc / 0.42)) if cyc < 0.42 else 1.0
-        sk = solve(pose_of(name, -60, 150, 1), RIG)
-        man(p, sk, BOY, eye_glow=0.25, aura=0.15, light=(0.5, -1.0))
-        draw_staff(p, sk, BOY, ang, length=200)
-        # splash at the fast part of the swing
-        if 0.4 < cyc < 0.75:
-            fx.Particles(x=-40, y=262, t0=0.30 + 0.42 * 1.15,
-                         count=14, speed=(120, 380), angle=(math.pi * 1.15, math.pi * 1.9),
-                         gravity=1300, life=(0.15, 0.4), size=(0.7, 1.6),
-                         color=(0.75, 0.88, 1.0), color_end=(0.4, 0.6, 1.0), seed=7,
-                         glow=0.5).draw(p, t % 1.15)
+        # the boy, mid-repetition: a trained cycle, never a held pose
+        cyc = ST_BOY.sample(t)
+        pose, ang, u = cyc
+        speed = ST_BOY.speed(t)
+        sk = motion.solve_grounded(pose_of(pose, -60, 150, 1), RIG, ground=296.0)
+        man(p, sk, BOY, eye_glow=0.25, aura=0.15, light=(0.5, -1.0), sway=sash_sway(ST_BOY, t))
+        motion.baton(p, sk, BOY, ang, 200.0, smear=speed * 0.8)
+        # water thrown off the lead foot every time it plants
+        motion.stamp_foot(p, sk, (t - ST_BOY.period * ST_BOY.impact_phase) % ST_BOY.period,
+                          depth=1.0, which="to_f")
+        if speed > 0.45:
+            fx.Particles(x=-40, y=262, t0=0.0, count=12, speed=(120, 380),
+                         angle=(math.pi * 1.15, math.pi * 1.9), gravity=1300,
+                         life=(0.15, 0.4), size=(0.7, 1.6), color=(0.75, 0.88, 1.0),
+                         color_end=(0.4, 0.6, 1.0), seed=7, glow=0.5).draw(p, (t % ST_BOY.period))
         fx.rain(p, t, count=240, alpha=0.17, depth=1.1)
         fx.wind_streaks(p, t, count=18, alpha=0.07, speed=600, depth=0.9)
 
     s02 = Shot("s02_training", 3.8,
-               CameraTrack().key(0, -60, 150, 1.34, 0.012).key(3.8, -100, 128, 1.48, -0.006, "soft")
+               CameraTrack().key(0, -60, 205, 1.42, 0.012).key(3.8, -100, 182, 1.56, -0.006, "soft")
                .handheld(0.7),
                s02_draw,
-               post=lambda t: Post(bloom=0.44, vignette=0.50, contrast=1.13),
+               post=lambda t: Post(bloom=0.44, vignette=0.50, contrast=1.13, exposure=1.06),
                whip_in=0.16)
 
     # ------------------------------------------------------------------ S03
@@ -159,6 +182,9 @@ def build() -> Film:
             p.polygon_world([(-4000, y), (4000, y), (4000, y + hgt), (-4000, y + hgt)],
                             (shade, shade * 1.15, shade * 1.95), depth=1.0)
             p.line([(-4000, y), (4000, y)], 0.8 + i * 0.5, (0.20, 0.24, 0.34), alpha=0.32, depth=1.0)
+        # a band of light on the wet stone the feet work on
+        sets.puddle(p, 40, 236, rx=520, ry=54, color=(0.34, 0.46, 0.70), t=t, depth=0.98,
+                    alpha=0.10, light_streak=(0.55, 0.74, 1.0))
         # the pivot: back foot lifts and plants
         plant = 0.85
         lift = 1.0 - ease("out", clamp(t / plant))
@@ -166,12 +192,6 @@ def build() -> Film:
         man(p, sk, BOY, light=(0.6, -1.0))
         draw_staff(p, sk, BOY, 128, length=200)
         if t > plant:
-            u = clamp((t - plant) / 1.0)
-            for k in range(3):
-                uk = clamp(u - k * 0.1)
-                p.circle((sk.to_b[0], sk.to_b[1] + 4), 12 + 130 * ease("expo_out", uk),
-                         (0.55, 0.74, 1.0), alpha=(1 - uk) ** 1.5 * 0.5, ring=1.5, additive=True,
-                         glow=0.16 * (1 - uk), glow_color=(0.5, 0.72, 1.0))
             fx.Particles(x=sk.to_b[0], y=sk.to_b[1], t0=plant, count=26, speed=(140, 520),
                          angle=(math.pi * 1.08, math.pi * 1.92), gravity=1500, life=(0.18, 0.6),
                          size=(0.8, 2.0), color=(0.80, 0.92, 1.0), color_end=(0.4, 0.6, 1.0),
@@ -180,7 +200,7 @@ def build() -> Film:
         sets.rain_splash_ground(p, t, y=250, count=16, alpha=0.35)
 
     s03 = Shot("s03_pivot", 2.0,
-               CameraTrack().key(0, 14, 96, 2.55, -0.04).key(2.0, 34, 112, 2.85, -0.015, "soft")
+               CameraTrack().key(0, 22, 152, 2.25, -0.02).key(2.0, 38, 166, 2.42, -0.006, "soft")
                .handheld(0.8),
                s03_draw,
                post=lambda t: Post(bloom=0.48, vignette=0.55, ca=1.4, contrast=1.14),
@@ -258,7 +278,7 @@ def build() -> Film:
         sets.mountains_ridge(p, t, PAL.far, depth=0.36, seed=57, base_y=50, amp=160, freq=0.0026,
                              rim=(0.28, 0.28, 0.42), rim_w=1.8, rim_a=0.35)
         wet_yard(p, t, y=330)
-        sets.temple_wall(p, t, PAL, depth=0.9, y=320, windows=1, spacing=0,
+        sets.temple_wall(p, t, PAL, depth=0.9, y=320, windows=2, spacing=1150,
                          color=(0.026, 0.026, 0.040), glow=(1.0, 0.6, 0.25), lit_amount=0.55)
         sets.fence(p, t, depth=0.95, x0=-1500, x1=1500, y=318, h=70)
         sets.tree(p, -980, 318, scale=0.95, depth=0.97, t=t, seed=11, sway=1.1,
@@ -269,83 +289,74 @@ def build() -> Film:
         sets.stone_lantern(p, 470, 300, scale=0.85, depth=1.1, t=t, glow=1.0, seed=6)
         sets.puddle(p, 40, 250, rx=300, ry=50, t=t, depth=1.04, alpha=0.09,
                     light_streak=(1.0, 0.62, 0.32))
-        # three slow beats: wind (0-.42) cut (.42-.62) follow (.62-1.0)
-        T = 1.45
-        beat = (t / T) % 1.0
-        if beat < 0.42:
-            name, ang = "staff_wind", 152.0
-        elif beat < 0.64:
-            name, ang = "staff_swing", 100.0
-        else:
-            name, ang = "staff_follow", 54.0
-        sk = solve(pose_of(name, -60, 150, 1, scale=1.04), RIG_MASTER)
-        man(p, sk, MASTER, rig=RIG_MASTER, eye_glow=0.6, aura=0.25, light=(0.5, -1.0))
-        draw_staff(p, sk, MASTER, ang, length=230)
-        # motion smear just after the cut
-        if 0.40 < beat < 0.60:
-            a, b = staff_line(sk, ang, 230)
-            p.line([a, b], 26, (1.0, 0.62, 0.30), alpha=0.20, depth=1.0, taper=0.2,
-                   additive=True, glow=0.5, glow_color=(1.0, 0.6, 0.25))
+        # three slow beats, driven by one continuous cycle (anticipation →
+        # cut → follow-through → settle) so nothing ever snaps between poses
+        pose, ang, beat = ST_MASTER.sample(t)
+        speed = ST_MASTER.speed(t)
+        sk = motion.solve_grounded(pose_of(pose, -60, 150, 1, scale=1.04), RIG_MASTER, ground=326.0)
+        man(p, sk, MASTER, rig=RIG_MASTER, eye_glow=0.6, aura=0.25 + 0.3 * speed,
+            light=(0.5, -1.0), sway=sash_sway(ST_MASTER, t))
+        motion.baton(p, sk, MASTER, ang, 230.0, smear=speed)
+        # dust kicked up at the plant of each cut
+        motion.stamp_foot(p, sk, (t - ST_MASTER.period * ST_MASTER.impact_phase) % ST_MASTER.period,
+                          color=(1.0, 0.8, 0.55), depth=1.0, which="to_f")
         # the boy watches, in silhouette at the edge
         sk_b = solve(pose_of("bow_wait", 470, 190, -1, scale=0.98), RIG)
         draw_character(p, sk_b, RIG, BOY, alpha=0.55, eye_glow=0.4, rim_on=True,
                        light=(-0.3, -1.0))
         fx.rain(p, t, count=230, alpha=0.17, depth=1.1)
-        if beat > 0.40 and beat < 0.44:
-            fx.Particles(x=-10, y=150, t0=(math.floor(t / T) * T) + 0.40 * T, count=12,
+        if speed > 0.5:
+            fx.Particles(x=-10, y=150, t0=0.0, count=10,
                          speed=(120, 380), angle=(0.2, 2.6), gravity=800, life=(0.15, 0.4),
                          size=(0.7, 1.5), color=(1.0, 0.8, 0.5), color_end=(1.0, 0.4, 0.1),
-                         seed=13, glow=0.6).draw(p, t)
+                         seed=13, glow=0.6).draw(p, t % ST_MASTER.period)
 
     s06 = Shot("s06_lesson", 4.4,
-               CameraTrack().key(0, 30, 200, 1.22, -0.012).key(2.2, 0, 186, 1.34, 0.006, "soft")
-               .key(4.4, -30, 200, 1.26, -0.004, "soft").handheld(0.6),
+               CameraTrack().key(0, 30, 250, 1.30, -0.012).key(2.2, 0, 236, 1.42, 0.006, "soft")
+               .key(4.4, -30, 250, 1.34, -0.004, "soft").handheld(0.6),
                s06_draw,
-               post=lambda t: Post(bloom=0.44, vignette=0.50, contrast=1.14),
+               post=lambda t: Post(bloom=0.44, vignette=0.50, contrast=1.14,
+                                   exposure=1.05 + 0.10 * motion.pulse(
+                                       motion.phase(t, ST_MASTER.period), 0.40, 0.56)),
                whip_in=0.16)
 
     # ------------------------------------------------------------------ S07
     def s07_draw(p: Painter, t: float):
         sets.sky(p, PAL, top=(0.008, 0.012, 0.026), bottom=(0.10, 0.065, 0.09))
         wet_yard(p, t, y=340)
-        sets.temple_wall(p, t, PAL, depth=0.9, y=330, windows=1, spacing=0,
+        sets.temple_wall(p, t, PAL, depth=0.9, y=330, windows=2, spacing=1250,
                          color=(0.026, 0.026, 0.040), glow=(1.0, 0.6, 0.25), lit_amount=0.55)
         sets.tree(p, -900, 328, scale=0.9, depth=0.96, t=t, seed=15, sway=1.3,
                   leaf=(0.12, 0.11, 0.12), rim=(0.30, 0.33, 0.44))
         sets.stone_lantern(p, -520, 306, scale=0.9, depth=1.08, t=t, glow=1.1, seed=7)
         sets.stone_lantern(p, 560, 306, scale=0.9, depth=1.08, t=t, glow=1.1, seed=8)
-        # three strikes in 3.6 s (1.2 s each), alternating wind/cut
-        T = 1.2
-        k = int(t // T)
-        beat = (t % T) / T
-        if beat < 0.30:
-            name, ang, smear = "staff_wind", 150.0, 0.0
-        elif beat < 0.55:
-            name, ang, smear = "staff_swing", 98.0, 1.0
-        else:
-            name, ang, smear = "staff_follow", 52.0, 0.35
-        sk = solve(pose_of(name, -40 + k * 16, 150, 1, scale=1.06), RIG_MASTER)
-        man(p, sk, MASTER, rig=RIG_MASTER, eye_glow=0.8, aura=0.35 + 0.2 * smear,
-            light=(0.5, -1.0))
-        draw_staff(p, sk, MASTER, ang, length=230)
-        if smear > 0:
-            a, b = staff_line(sk, ang, 230)
-            for i in range(3):
-                p.line([a, b], 30 - i * 8, (1.0, 0.66, 0.32), alpha=0.16 * smear,
-                       depth=1.0, taper=0.15, additive=True, glow=0.5 * smear,
-                       glow_color=(1.0, 0.6, 0.25))
-        # the boy mirrors him, smaller in the background
-        bsk = solve(pose_of(name, 420, 205, -1, scale=0.92), RIG)
+        # three strikes in 3.6 s, each one a full anticipation + cut + settle
+        pose, ang, beat = ST_FAST.sample(t)
+        speed = ST_FAST.speed(t)
+        drift = 16.0 * (int(t // ST_FAST.period) * 0.35 + beat * 0.35)
+        sk = motion.solve_grounded(pose_of(pose, -40 + drift, 150, 1, scale=1.06), RIG_MASTER,
+                                   ground=336.0)
+        man(p, sk, MASTER, rig=RIG_MASTER, eye_glow=0.8, aura=0.35 + 0.25 * speed,
+            light=(0.5, -1.0), sway=sash_sway(ST_FAST, t, 34.0))
+        motion.baton(p, sk, MASTER, ang, 230.0, smear=speed)
+        motion.stamp_foot(p, sk, (t - ST_FAST.period * ST_FAST.impact_phase) % ST_FAST.period,
+                          color=(1.0, 0.8, 0.55), depth=1.0, which="to_f")
+        # the boy mirrors him a beat late — overlap makes the pair feel alive
+        bpose = ST_FAST.pose(motion.phase(t - 0.13, ST_FAST.period))
+        bang = ST_FAST.angle(motion.phase(t - 0.13, ST_FAST.period))
+        bsk = motion.solve_grounded(pose_of(bpose, 420, 205, -1, scale=0.92), RIG, ground=300.0)
         draw_character(p, bsk, RIG, BOY, alpha=0.75, eye_glow=0.5, light=(-0.4, -1.0))
-        draw_staff(p, bsk, BOY, 180 - ang, length=190, alpha=0.75)
+        draw_staff(p, bsk, BOY, 180 - bang, length=190, alpha=0.75)
         fx.rain(p, t, count=250, alpha=0.18, depth=1.1)
         fx.wind_streaks(p, t, count=22, alpha=0.09, speed=900, depth=0.95)
 
     s07 = Shot("s07_faster", 3.6,
-               CameraTrack().key(0, -20, 190, 1.30, 0.010).key(1.8, 40, 176, 1.42, -0.004, "soft")
-               .key(3.6, -10, 190, 1.34, 0.006, "soft").handheld(0.9),
+               CameraTrack().key(0, -20, 238, 1.38, 0.010).key(1.8, 40, 224, 1.50, -0.004, "soft")
+               .key(3.6, -10, 238, 1.42, 0.006, "soft").handheld(0.9),
                s07_draw,
-               post=lambda t: Post(bloom=0.46, vignette=0.50, contrast=1.16, ca=1.2),
+               post=lambda t: Post(bloom=0.46, vignette=0.50, contrast=1.16, ca=1.2,
+                                   exposure=1.05 + 0.14 * motion.pulse(
+                                       motion.phase(t, ST_FAST.period), 0.38, 0.56)),
                whip_in=0.14)
 
     # ------------------------------------------------------------------ S08
@@ -356,7 +367,7 @@ def build() -> Film:
         tf = min(t, FREEZE)
         sets.sky(p, PAL, top=(0.010, 0.014, 0.030), bottom=(0.11, 0.07, 0.10))
         wet_yard(p, tf, y=330)
-        sets.temple_wall(p, t, PAL, depth=0.9, y=320, windows=1, spacing=0,
+        sets.temple_wall(p, t, PAL, depth=0.9, y=320, windows=2, spacing=1150,
                          color=(0.026, 0.026, 0.040), glow=(1.0, 0.6, 0.25), lit_amount=0.55)
         sets.tree(p, 900, 316, scale=1.0, depth=0.97, t=t, seed=17, sway=1.2,
                   leaf=(0.12, 0.11, 0.12), rim=(0.30, 0.33, 0.44))
@@ -364,9 +375,12 @@ def build() -> Film:
                   leaf=(0.12, 0.11, 0.12), rim=(0.30, 0.33, 0.44))
         sets.stone_lantern(p, -600, 300, scale=1.0, depth=1.1, t=t, glow=1.2, seed=9)
         # the boy, mid-step back
+        # he is already giving ground before the stop; after it he holds still
         step_back = ease("out", clamp(t / FREEZE))
-        bsk = solve(pose_of("hit" if t > FREEZE else "stance", 120 + 26 * step_back, 170, -1,
-                            scale=1.0, spine=196 if t <= FREEZE else 186), RIG)
+        blend = ease("smooth", clamp((t - FREEZE * 0.72) / (FREEZE * 0.28)))
+        bpose = motion.mix(pose_of("stance", 0, 0, -1, scale=1.0, spine=196),
+                           pose_of("hit", 0, 0, -1, scale=1.0, spine=186), blend)
+        bsk = motion.solve_grounded(pose_of(bpose, 120 + 26 * step_back, 170, -1), RIG, ground=322.0)
         man(p, bsk, BOY, eye_glow=0.85, light=(-0.4, -1.0))
         # the master: palm stop
         msk = solve(pose_of("palm_stop", -95, 150, 1, scale=1.06), RIG_MASTER)

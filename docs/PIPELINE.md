@@ -57,7 +57,8 @@ the shot in a scene module where full control is needed.
 | --- | --- |
 | `pipeline/core/easing.py` | easings, keyed `Track`, value noise, shake impulses |
 | `pipeline/core/camera.py` | camera track (x/y/zoom/roll), parallax, projection, image plates |
-| `pipeline/core/character.py` | FK rig, 30-pose library, line-art + rim-light painter, smears |
+| `pipeline/core/character.py` | FK rig, 41-pose library, spline pose tracks, ground pinning, line-art + rim-light painter, smears |
+| `pipeline/core/motion.py` | animation layer: pose blending, `StaffCycle` (anticipation → cut → follow-through), damped springs, overlap/lag, impact rings |
 | `pipeline/core/fx.py` | particles, embers, impacts, shockwaves, speed lines, god rays, rain, lightning |
 | `pipeline/core/sets.py` | sky, moon, clouds, mountain ridges, ground, torii, lanterns, stairs, bamboo, skyline |
 | `pipeline/core/render.py` | AA vector canvas, HDR post (bloom/streak/CA/tonemap/grain/letterbox) |
@@ -83,6 +84,38 @@ python -m venv .venv && .venv/bin/pip install numpy scipy pillow imageio-ffmpeg 
 Frames are written as PNGs and encoded afterwards, so a crash costs one frame
 and `resume=True` skips the ones already on disk. 4K is the same command with
 `--w 3840`.
+
+### Speed budget (1080p, 2 vCPU)
+
+| Pass | Before | Now |
+| --- | --- | --- |
+| soft blobs / haze | 2-D gaussian field per blob | separable 1-D outer product (~2× faster) |
+| strokes (`_seg`) | PIL draw + buffers | clipped numpy span fill, no temporaries |
+| post | 3 full-res blurs + CA on full channels | one low-res bloom/streak buffer, half-res CA, LUT tone map, luma-only sharpen |
+| skies / full-frame gradients | mask + composite | direct row write |
+| render wall clock | 1.04 fps (14.2 min / 720 f) | ~2.5 fps (~4.6 min / 720 f) |
+
+Rules that keep it fast: never paint a static backdrop more than once per
+frame unless something in it moves; keep every soft element on the 1-D
+separable path; do post at quarter/half resolution and upsample once.
+
+## Motion language
+
+The rig is 2-D, so weight has to come from timing, not simulation:
+
+* **Spline poses** — `PoseTrack.at()` runs a non-uniform Catmull-Rom through the
+  key poses, so limbs travel in arcs and keep their momentum through a key.
+  Never switch between static poses on a frame boundary.
+* **Ground pinning** — `solve(pose, rig, ground=y)` shifts the whole body so the
+  lowest foot sits exactly on the floor: no sliding, no hovering.
+* **Anticipation → impact → follow-through** — `motion.StaffCycle` walks a keyed
+  pose/angle table (ready → wind → coil → impact → follow → settle) with the
+  staff tip easing into the cut and running fast through it.
+* **Overlap** — `Spring` and `motion.lag` let sash, staff and the watching
+  student respond a few frames late; the student in S07 mirrors the master with
+  a 0.13 s offset.
+* **Contact cues** — `motion.stamp_foot` (ring + thrown water), a wet-stone
+  reflection under every figure, and an exposure kick on the impact frame.
 
 ## Shot language used in the teaser
 

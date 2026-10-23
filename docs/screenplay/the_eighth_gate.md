@@ -67,6 +67,17 @@ Design notes for the preview:
   air instead of an impact.
 * **Rain is the metronome.** It is present in every shot and drops out for the
   freeze, so the silence does the work.
+* **Simpler sets (v2).** Each shot keeps one horizon, one light source and at
+  most four set elements; the sky is a two-colour gradient, the ground is two
+  gradient bands with five receding slabs, and glows are single soft blobs.
+  Clutter (extra mist, rings, dust clouds, duplicate lanterns) was cut unless it
+  carries information.
+* **Motion (v2).** Staff work is driven by `motion.StaffCycle`: ready → wind →
+  coil → impact → follow → settle, sampled continuously (never a held pose),
+  with the body pinned to the floor, the staff tip leading the cut, the sash
+  lagging two frames behind the hips, and a contact ring + thrown water on every
+  plant. The student mirrors the master 0.13 s late so the pair never moves as
+  one block.
 
 Remaining for the full chapter (per the 8-minute cut): the master's arrival on
 the mountain road, the boy's three failed copies, his fall, and the master

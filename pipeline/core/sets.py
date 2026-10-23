@@ -65,9 +65,9 @@ def clouds(p, t, pal: Palette, depth=0.32, count=7, y0=-560.0, seed=43, color=No
         y = y0 + i * 70 + r.uniform(-40, 40)
         x = -2800 + ((r.uniform(0, 5600) + t * speed * r.uniform(0.6, 1.6)) % 6200)
         w = r.uniform(600, 1800)
-        for k in range(7):
-            p.blob((x + r.uniform(-w / 2, w / 2), y + r.uniform(-40, 40)),
-                   r.uniform(90, 260), col, alpha=alpha * r.uniform(0.25, 0.6), depth=depth, soft=0.9)
+        for k in range(4):
+            p.blob((x + (-0.45 + 0.3 * k) * w, y + r.uniform(-90, 60)),
+                   r.uniform(140, 280), col, alpha=alpha * r.uniform(0.30, 0.55), depth=depth, soft=1.05)
 
 
 def mountains(p, t, pal: Palette, depth=0.4, seed=47, color=None, base_y=90.0, amp=260.0,
@@ -111,10 +111,10 @@ def mountains_ridge(p, t, color, depth=0.4, seed=47, base_y=90.0, amp=260.0, fre
 def fog_band(p, t, y, thickness=180.0, color=(0.25, 0.28, 0.4), alpha=0.22, depth=0.45, seed=53,
              width=6000.0, speed=18.0):
     r = np.random.default_rng(seed)
-    for i in range(9):
+    for i in range(5):
         x = -width + ((r.uniform(0, 2 * width) + t * speed * r.uniform(0.5, 1.5)) % (2 * width))
-        p.blob((x, y + r.uniform(-thickness / 2, thickness / 2)), r.uniform(thickness * 1.4, thickness * 3.2),
-               color, alpha=alpha * r.uniform(0.3, 0.8), depth=depth, soft=0.75)
+        p.blob((x, y + r.uniform(-thickness / 2, thickness / 2)), r.uniform(thickness * 1.6, thickness * 2.8),
+               color, alpha=alpha * r.uniform(0.45, 0.8), depth=depth, soft=0.85)
 
 
 def ground(p, pal: Palette, y=210.0, color=None, depth=1.0, refl=None, wet=False,
@@ -122,35 +122,30 @@ def ground(p, pal: Palette, y=210.0, color=None, depth=1.0, refl=None, wet=False
     """Horizon ground plane with fog, perspective slabs and a light pool."""
     col = np.asarray(color or pal.near, np.float32)
     haze = np.asarray(pal.haze, np.float32)
-    lit = col * 0.9 + haze * 0.16
-    deep = col * 0.5
-    p.polygon_world([(-6000, y), (6000, y), (6000, 6000), (-6000, 6000)], None, depth=depth,
-                    gradient=(tuple(lit), tuple(deep)))
+    lit = col * 0.9 + haze * 0.13
+    deep = col * 0.45
+    band = 210.0
+    # horizon haze → lit plane → deep foreground, all in the plane's own
+    # gradient: no seams, no extra draws
+    p.polygon_world([(-6000, y - 24), (6000, y - 24), (6000, y + band), (-6000, y + band)],
+                    None, depth=depth, gradient=(tuple(haze * 0.26), tuple(lit)))
+    p.polygon_world([(-6000, y + band), (6000, y + band), (6000, 6000), (-6000, 6000)],
+                    None, depth=depth, gradient=(tuple(lit * 0.96), tuple(deep)))
     # light pool under the main light source
     if light_col is not None:
-        p.blob((light_x, y + 70), 300, light_col, alpha=0.10, depth=depth - 0.01, soft=1.6,
+        p.blob((light_x, y + 70), 320, light_col, alpha=0.09, depth=depth - 0.01, soft=1.6,
                additive=True)
-    # perspective slab lines (receding)
+    # a few soft receding lines read as stone without adding noise
     if detail > 0:
-        for i in range(7):
-            yy = y + (i ** 1.7) * 22 * detail
-            p.line([(-6000, yy), (6000, yy)], 0.8 + i * 0.5,
-                   tuple(np.asarray(pal.haze) * 0.55), alpha=0.16 + 0.03 * i, depth=depth,
-                   glow=0.0)
-        for i in range(-9, 10):
-            x = i * 260
-            p.line([(x * 0.25, y), (x * 2.4, 4000)], 0.9, tuple(np.asarray(pal.haze) * 0.5),
-                   alpha=0.10, depth=depth)
-    # mist hugging the ground so the plane melts into the background
-    for i in range(7):
-        p.blob((-2400 + i * 800, y + 24 + (i % 3) * 14), 460, tuple(haze * 0.95), alpha=0.20,
-               depth=depth - 0.02, soft=0.85)
-    for i in range(4):
-        p.blob((-1800 + i * 1200, y + 6), 900, tuple(haze * 0.75), alpha=0.16,
-               depth=depth - 0.03, soft=0.7)
+        # five receding slabs: few draws, but they give the plane its depth
+        for i in range(5):
+            yy = y + (i ** 1.9) * 34 * detail
+            p.line([(-6000, yy), (6000, yy)], 1.2 + i * 1.0,
+                   tuple(haze * 0.60), alpha=0.09 + 0.035 * i, depth=depth)
+    p.blob((0, y + 30), 420, tuple(haze * 0.75), alpha=0.07, depth=depth - 0.02, soft=1.0)
     # rim of light on the horizon
-    p.line([(-6000, y), (6000, y)], 2.0, tuple(np.asarray(pal.accent) * 0.7), alpha=0.35,
-           depth=depth, glow=0.3, glow_color=pal.accent)
+    p.line([(-6000, y), (6000, y)], 2.0, tuple(np.asarray(pal.accent) * 0.7), alpha=0.32,
+           depth=depth, glow=0.26, glow_color=pal.accent)
 
 
 def wet_reflection(p, sources: Sequence[tuple[float, float, float, tuple]], y=210.0, depth=1.0,
@@ -286,7 +281,7 @@ def temple_wall(p, t, pal: Palette, depth=0.92, y=250.0, windows=5, spacing=380.
         x = (i - (windows - 1) / 2) * spacing
         w, h = 96, 150
         p.polygon_world([(x - w / 2, y - 330), (x + w / 2, y - 330), (x + w / 2, y - 330 + h),
-                         (x - w / 2, y - 330 + h)], tuple(col * 2.4 + haze * 0.25), depth=depth)
+                         (x - w / 2, y - 330 + h)], tuple(col * 0.85 + haze * 0.06), depth=depth)
         if lit_amount > 0:
             flick = 0.8 + 0.2 * math.sin(t * 4.0 + i * 1.7)
             p.polygon_world([(x - w / 2 + 6, y - 324), (x + w / 2 - 6, y - 324),
@@ -389,9 +384,7 @@ def village(p, t, pal: Palette, depth=0.5, y=260.0, seed=83, width=3400.0, rows=
                     ww, wh = r.uniform(9, 18), r.uniform(10, 20)
                     fl = 0.75 + 0.25 * math.sin(t * r.uniform(1.5, 5.0) + wx)
                     p.polygon_world([(wx, wy), (wx + ww, wy), (wx + ww, wy - wh), (wx, wy - wh)],
-                                    (1.0, 0.72, 0.36), alpha=0.75 * fl, depth=d, additive=True)
-                    p.blob((wx + ww / 2, wy - wh / 2), 44, (1.0, 0.62, 0.28),
-                           alpha=0.16 * fl * hazy, depth=d, additive=True, soft=1.3)
+                                    (1.0, 0.72, 0.36), alpha=0.80 * fl, depth=d, additive=True)
             # chimney smoke
             if r.random() < 0.35:
                 cx = x + w * r.uniform(0.2, 0.8)
@@ -423,8 +416,8 @@ def rain_splash_ground(p, t, y=280.0, count=26, seed=97, color=(0.65, 0.78, 1.0)
         yy = y + r.uniform(0, 420)
         ph = r.uniform(0, 1.0)
         u = ((t * r.uniform(0.8, 1.6) + ph) % 1.0)
-        rr = 4 + 22 * u
-        p.circle((x, yy), rr, color, alpha=alpha * (1 - u) ** 2, ring=1.2, additive=True)
+        rr = 3 + 13 * u
+        p.circle((x, yy), rr, color, alpha=alpha * (1 - u) ** 2.2, ring=1.0, additive=True)
 
 
 def stone_lantern(p, x, y, scale=1.0, depth=1.0, color=(0.045, 0.048, 0.06), t=0.0,
@@ -462,7 +455,7 @@ def puddle(p, x, y, rx=140.0, ry=34.0, color=(0.55, 0.68, 0.95), t=0.0, depth=1.
     """A wet patch with a soft reflected streak and slow rings."""
     p.polygon_world([(x - rx, y), (x - rx * 0.55, y - ry), (x + rx * 0.6, y - ry * 0.9),
                      (x + rx, y + ry * 0.2), (x + rx * 0.3, y + ry), (x - rx * 0.7, y + ry * 0.8)],
-                    color, alpha=alpha, depth=depth, additive=True, blur=3.0)
+                    color, alpha=alpha, depth=depth, additive=True, blur=13.0)
     if light_streak is not None:
         for i in range(5):
             k = i / 4
@@ -502,10 +495,10 @@ def tree(p, x, y, scale=1.0, depth=1.0, t=0.0, color=(0.028, 0.030, 0.034), leaf
         p.line([(bx, by), ((bx + end[0]) / 2, end[1] - 20 * scale), end],
                max(2.0, 9 * scale), color, depth=depth, taper=0.3)
         if leaf is not None:
-            for k in range(3):
-                lx = bx + (end[0] - bx) * (0.45 + 0.2 * k)
-                ly = by + (end[1] - by) * (0.45 + 0.2 * k) + 10 * scale
-                p.blob((lx, ly), 52 * scale * r.uniform(0.7, 1.2), leaf,
-                       alpha=0.20 * r.uniform(0.6, 1.0), depth=depth, soft=1.0)
+            for k in (0.35, 0.75):
+                lx = bx + (end[0] - bx) * k
+                ly = by + (end[1] - by) * k + 12 * scale
+                p.blob((lx, ly), 96 * scale * r.uniform(0.8, 1.15), leaf,
+                       alpha=0.15 * r.uniform(0.7, 1.0), depth=depth, soft=0.8)
         if rim is not None:
             p.line([(bx, by), end], 1.4, rim, alpha=0.28, depth=depth)

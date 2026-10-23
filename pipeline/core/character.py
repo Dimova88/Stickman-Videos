@@ -77,6 +77,24 @@ class Pose:
     def copy(self, **kw) -> "Pose":
         return replace(self, **kw)
 
+    # --- flat vector form, used for spline interpolation -------------------
+    def vec(self) -> np.ndarray:
+        return np.array([self.px, self.py, self.spine, self.neck, self.head,
+                         self.arm_f[0], self.arm_f[1], self.arm_b[0], self.arm_b[1],
+                         self.leg_f[0], self.leg_f[1], self.leg_f[2],
+                         self.leg_b[0], self.leg_b[1], self.leg_b[2],
+                         self.scale, self.squash, self.lean_off, self.bob, self.head_turn],
+                        dtype=np.float64)
+
+    @staticmethod
+    def from_vec(v, facing: int = 1) -> "Pose":
+        b = [float(x) for x in v]
+        return Pose(px=b[0], py=b[1], spine=b[2], neck=b[3], head=b[4],
+                    arm_f=(b[5], b[6]), arm_b=(b[7], b[8]),
+                    leg_f=(b[9], b[10], b[11]), leg_b=(b[12], b[13], b[14]),
+                    scale=b[15], squash=b[16], lean_off=b[17], bob=b[18], head_turn=b[19],
+                    facing=facing)
+
     def lerp(self, other: "Pose", t: float) -> "Pose":
         def L(a, b):
             return lerp(a, b, t)
@@ -120,8 +138,13 @@ class Skeleton:
     scale: float = 1.0
 
 
-def solve(pose: Pose, rig: Rig) -> Skeleton:
-    """Forward kinematics for one pose."""
+def solve(pose: Pose, rig: Rig, ground: float | None = None) -> Skeleton:
+    """Forward kinematics for one pose.
+
+    ``ground`` = world y of the floor. When given, the whole body is shifted so
+    the lowest foot rests exactly on it — no sliding, no hovering, which is the
+    single biggest realism win for a 2D rig.
+    """
     f = pose.facing
     s = pose.scale
     sq = pose.squash
@@ -168,9 +191,23 @@ def solve(pose: Pose, rig: Rig) -> Skeleton:
     txb, tyb = dirv(pose.leg_b[2])
     to_b = (foot_b[0] + f * txb * rig.foot * s, foot_b[1] + tyb * rig.foot * s)
 
-    return Skeleton(pelvis, chest, neck, head_c, rig.head_r * s * (1 + 0.03 * (sq - 1)),
-                    shoulder, elbow_f, hand_f, elbow_b, hand_b, hip,
-                    knee_f, foot_f, knee_b, foot_b, to_f, to_b, f, s)
+    sk = Skeleton(pelvis, chest, neck, head_c, rig.head_r * s * (1 + 0.03 * (sq - 1)),
+                  shoulder, elbow_f, hand_f, elbow_b, hand_b, hip,
+                  knee_f, foot_f, knee_b, foot_b, to_f, to_b, f, s)
+    if ground is not None:
+        lowest = max(sk.to_f[1], sk.to_b[1], sk.foot_f[1], sk.foot_b[1])
+        dy = ground - lowest
+        if abs(dy) > 1e-6:
+            sk = Skeleton(*(_shift_pt(pt, dy) if isinstance(pt, tuple) else pt
+                            for pt in (sk.pelvis, sk.chest, sk.neck, sk.head_c, sk.head_r,
+                                       sk.shoulder, sk.elbow_f, sk.hand_f, sk.elbow_b, sk.hand_b,
+                                       sk.hip, sk.knee_f, sk.foot_f, sk.knee_b, sk.foot_b,
+                                       sk.to_f, sk.to_b, sk.facing, sk.scale)))
+    return sk
+
+
+def _shift_pt(pt, dy):
+    return (pt[0], pt[1] + dy)
 
 
 # --------------------------------------------------------------------- colours
@@ -418,6 +455,7 @@ class PoseKey:
     t: float
     pose: Pose
     ease: str = "smooth"
+    spline: bool = True
 
 
 class PoseTrack:
@@ -440,6 +478,13 @@ class PoseTrack:
         return self.add(t, self.keys[-1].pose, "smooth")
 
     def at(self, t: float) -> Pose:
+        """Sample the track.
+
+        Between two keys the pose is interpolated along a Catmull-Rom spline
+        (tangents from the neighbouring keys) rather than a straight line: limbs
+        travel in arcs and the motion keeps its momentum through a key, which is
+        what makes animation read as weight instead of as a slide.
+        """
         ks = self.keys
         if t <= ks[0].t:
             return ks[0].pose
@@ -454,9 +499,28 @@ class PoseTrack:
                 hi = mid
         a, b = ks[lo], ks[hi]
         u = ease(b.ease, (t - a.t) / max(b.t - a.t, 1e-9))
-        p = a.pose.lerp(b.pose, u)
-        # stylised spacing: hold near the end of fast moves (anime "snap & settle")
-        return p
+        p1, p2 = a.pose.vec(), b.pose.vec()
+        if not b.spline or len(ks) < 3:
+            v = p1 + (p2 - p1) * u
+            return Pose.from_vec(v, a.pose.facing if u < 1 else b.pose.facing)
+        p0 = ks[max(lo - 1, 0)].pose.vec()
+        p3 = ks[min(hi + 1, len(ks) - 1)].pose.vec()
+        # non-uniform Catmull-Rom tangent scaling keeps timing honest
+        dt0 = max(a.t - ks[max(lo - 1, 0)].t, 1e-6) if lo > 0 else 0.0
+        dt1 = max(b.t - a.t, 1e-6)
+        dt2 = max(ks[min(hi + 1, len(ks) - 1)].t - b.t, 1e-6) if hi + 1 < len(ks) else 0.0
+        m1 = (p2 - p0) / (dt0 + dt1) * dt1 if lo > 0 else (p2 - p1)
+        m2 = (p3 - p1) / (dt1 + dt2) * dt1 if hi + 1 < len(ks) else (p2 - p1)
+        u2, u3 = u * u, u * u * u
+        v = ((2 * u3 - 3 * u2 + 1) * p1 + (u3 - 2 * u2 + u) * m1 +
+             (-2 * u3 + 3 * u2) * p2 + (u3 - u2) * m2)
+        return Pose.from_vec(v, a.pose.facing if u < 1 else b.pose.facing)
+
+    def velocity(self, t: float, dt: float = 1 / 48) -> tuple[float, float]:
+        """Pelvis velocity in world units per second (for smears and drag)."""
+        a = self.at(max(t - dt, 0.0))
+        b = self.at(t)
+        return ((b.px - a.px) / dt, (b.py - a.py) / dt)
 
 
 # --------------------------------------------------------------------- drawing
@@ -665,7 +729,7 @@ def draw_staff(p: "Painter", sk: Skeleton, look: Look, angle: float, length: flo
 
 
 def draw_sash(p: "Painter", sk: Skeleton, look: Look, color=(0.55, 0.16, 0.12), depth=1.0,
-              alpha=1.0, w: float = 1.0):
+              alpha=1.0, w: float = 1.0, sway: float = 0.0):
     """A belt across the hips, plus two hanging tails — reads as a robe at distance."""
     hip = sk.hip
     che = sk.chest
@@ -677,6 +741,7 @@ def draw_sash(p: "Painter", sk: Skeleton, look: Look, color=(0.55, 0.16, 0.12), 
            13.0 * sk.scale * w, color, alpha=alpha, depth=depth, taper=0.95)
     # a knot and two hanging tails (reads as a robe at distance)
     for s in (-1, 1):
-        p.line([(hip[0] + nx * hw * 0.35 * s, hip[1] + ny * hw * 0.35 * s + 4),
-                (hip[0] + nx * hw * 0.5 * s - sk.facing * 13, hip[1] + 46 * sk.scale)],
+        tail = (hip[0] + nx * hw * 0.5 * s - sk.facing * 13 - sway * (1.0 if s > 0 else 0.7),
+                hip[1] + 46 * sk.scale + abs(sway) * 0.16)
+        p.line([(hip[0] + nx * hw * 0.35 * s, hip[1] + ny * hw * 0.35 * s + 4), tail],
                5.0 * sk.scale * w, color, alpha=alpha * 0.92, depth=depth, taper=0.35)
