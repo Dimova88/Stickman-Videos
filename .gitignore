@@ -1,0 +1,11 @@
+# Build artifacts
+renders/tmp/
+renders/.frames_*/
+renders/frames/
+*.pyc
+__pycache__/
+.venv/
+node_modules/
+assets/bg/raw/
+renders/preview/
+*.mp4.tmp
