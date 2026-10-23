@@ -79,28 +79,64 @@ def angles_of(*vals) -> tuple:
 
 
 # ------------------------------------------------------------------------ IK
-def _two_bone(start, target, l1: float, l2: float, bend: float = 1.0):
-    """Absolute angles for a two-segment chain reaching ``target``.
-
-    ``bend`` picks which of the two solutions to use (+1 / -1), i.e. whether the
-    elbow or knee folds one way or the other.
-    """
+def _two_bone_both(start, target, l1: float, l2: float):
+    """Both IK solutions as (mid point, angle1, angle2)."""
     dx, dy = target[0] - start[0], target[1] - start[1]
     d = math.hypot(dx, dy)
     d = max(min(d, l1 + l2 - 0.01), abs(l1 - l2) + 0.01)
     base = math.atan2(dy, dx)
     cos_a = (d * d + l1 * l1 - l2 * l2) / (2 * d * l1)
     a = math.acos(max(-1.0, min(1.0, cos_a)))
-    a = a * (1.0 if bend >= 0 else -1.0)
-    mid = (start[0] + math.cos(base + a) * l1, start[1] + math.sin(base + a) * l1)
-    return (base + a, math.atan2(target[1] - mid[1], target[0] - mid[0]))
+    out = []
+    for sgn in (1.0, -1.0):
+        ang1 = base + a * sgn
+        mid = (start[0] + math.cos(ang1) * l1, start[1] + math.sin(ang1) * l1)
+        ang2 = math.atan2(target[1] - mid[1], target[0] - mid[0])
+        out.append((mid, ang1, ang2))
+    return out
+
+
+def _two_bone(start, target, l1: float, l2: float, bend: float = 1.0):
+    """Absolute angles for a two-segment chain reaching ``target``.
+
+    ``bend`` picks which of the two solutions to use (+1 / -1), i.e. whether the
+    elbow or knee folds one way or the other.
+    """
+    sols = _two_bone_both(start, target, l1, l2)
+    mid, ang1, ang2 = sols[0] if bend >= 0 else sols[1]
+    return (ang1, ang2)
+
+
+def _bent(start, target, l1: float, l2: float, mode: str, facing: int):
+    """Pick the anatomically plausible elbow/knee.
+
+    ``mode='knee'``  — the joint must point forward (a knee does not bend
+                       sideways or backwards);
+    ``mode='elbow'`` — the joint hangs low and slightly behind the hand, which
+                       is where an elbow sits when a guard is up.
+    """
+    sols = _two_bone_both(start, target, l1, l2)
+    # A knee is a forward-pointing hinge: of the two IK solutions pick the one
+    # whose joint is furthest forward. With the foot under or ahead of the hip
+    # that puts the knee ahead of the leg line, which is how a person stands.
+    if mode == "knee":
+        key = lambda s: (s[0][0] - start[0]) * facing + 0.05 * (start[1] - s[0][1])
+    else:
+        key = lambda s: s[0][1] - 0.18 * (s[0][0] - start[0]) * facing
+    mid, ang1, ang2 = max(sols, key=key)
+    return ang1, ang2
 
 
 def pose_from_targets(x: float, y: float, *, facing: int = 1, scale: float = 1.0,
                       torso: float = -math.pi / 2, head_turn: float = 0.0,
                       hand_a=None, hand_b=None, foot_a=None, foot_b=None,
-                      elbow_a: float = 1.0, elbow_b: float = 1.0,
-                      knee_a: float = 1.0, knee_b: float = -1.0) -> Pose:
+                      elbow_a=None, elbow_b=None, knee_a=None, knee_b=None) -> Pose:
+    """Build a Pose from where the hands and feet should be (world coords).
+
+    ``elbow_*`` / ``knee_*`` default to ``None`` = pick the anatomically correct
+    side automatically (knees forward, elbows low). Pass +1 / -1 only to force a
+    deliberately wrong-looking bend.
+    """
     """Build a Pose from where the hands and feet should be (world coords).
 
     ``hand_a`` / ``foot_a`` are the *far* side limbs (drawn first, behind the
@@ -127,10 +163,15 @@ def pose_from_targets(x: float, y: float, *, facing: int = 1, scale: float = 1.0
         foot_b = (hip[0] + math.cos(2.00) * (SEG[9][2] + SEG[10][2]) * s,
                   hip[1] + math.sin(2.00) * (SEG[9][2] + SEG[10][2]) * s)
 
-    ua, fa = _two_bone(neck, hand_a, SEG[3][2] * s, SEG[4][2] * s, elbow_a)
-    ub, fb = _two_bone(neck, hand_b, SEG[5][2] * s, SEG[6][2] * s, elbow_b)
-    ta, sa = _two_bone(hip, foot_a, SEG[7][2] * s, SEG[8][2] * s, knee_a)
-    tb, sb = _two_bone(hip, foot_b, SEG[9][2] * s, SEG[10][2] * s, knee_b)
+    pick_e = lambda v: ("elbow" if v is None else None)
+    ua, fa = (_bent(neck, hand_a, SEG[3][2] * s, SEG[4][2] * s, "elbow", facing)
+              if elbow_a is None else _two_bone(neck, hand_a, SEG[3][2] * s, SEG[4][2] * s, elbow_a))
+    ub, fb = (_bent(neck, hand_b, SEG[5][2] * s, SEG[6][2] * s, "elbow", facing)
+              if elbow_b is None else _two_bone(neck, hand_b, SEG[5][2] * s, SEG[6][2] * s, elbow_b))
+    ta, sa = (_bent(hip, foot_a, SEG[7][2] * s, SEG[8][2] * s, "knee", facing)
+              if knee_a is None else _two_bone(hip, foot_a, SEG[7][2] * s, SEG[8][2] * s, knee_a))
+    tb, sb = (_bent(hip, foot_b, SEG[9][2] * s, SEG[10][2] * s, "knee", facing)
+              if knee_b is None else _two_bone(hip, foot_b, SEG[9][2] * s, SEG[10][2] * s, knee_b))
     a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9] = ua, fa, ub, fb, ta, sa, tb, sb
     return Pose(x=x, y=y, facing=facing, scale=s, head_turn=head_turn, angles=tuple(a))
 

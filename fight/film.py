@@ -73,7 +73,7 @@ def draw_effects(cv: Canvas, events, t: float, overlay_flash: list):
                 continue
             k = age / life
             grow = 1 - (1 - k) ** 2
-            r = (22 + 44 * size) * u * (0.6 + 0.7 * grow) * (1 - 0.35 * k)
+            r = (16 + 30 * size) * u * (0.6 + 0.7 * grow) * (1 - 0.35 * k)
             alpha = int(255 * (1 - k) ** 0.7)
             rot = 0.4 + e["t"] * 3.0
             # white core with an ink outline: the Pivot-era impact star
@@ -118,10 +118,10 @@ def draw_effects(cv: Canvas, events, t: float, overlay_flash: list):
                 cv.flush()
                 cv.disc((px, py), rr * 0.35, (214, 208, 196))
         elif e["kind"] == "flash":
-            if age > 0.18:
+            if age > 0.12:
                 continue
-            k = age / 0.18
-            overlay_flash.append(int(150 * (1 - k) ** 2 * size))
+            k = age / 0.12
+            overlay_flash.append(int(90 * (1 - k) ** 2 * size))
 
 
 # -------------------------------------------------------------------- frame
@@ -134,8 +134,8 @@ def render_frame(t: float, scene, w=W, h=H) -> Image.Image:
     cv = Canvas(w, h, cam)
     draw_background(cv)
 
-    pa = scene["a"].at(t)
-    pb = scene["b"].at(t)
+    pa = scene["a"].pose_at(t)
+    pb = scene["b"].pose_at(t)
 
     # ground contact shadows, then the figures, far fighter first
     for p in (pb, pa):

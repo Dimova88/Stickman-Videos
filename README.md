@@ -40,6 +40,7 @@ python3 -m venv .venv
 | `fight/core.py` | StykAnimate figure definition, forward kinematics, two-bone IK, pose tracks, easings |
 | `fight/draw.py` | aggdraw renderer: round-cap sticks, flat two-tone backdrop, contact shadows |
 | `fight/choreo.py` | the 30 s choreography — pose library, keyed tracks, camera, hit/hurt events |
+| `fight/motion.py` | channel animation: spline tracks, footwork simulation, drag/lag, idle layer |
 | `fight/film.py` | frame loop, impact stars, whooshes, dust, shake, synthesised audio, MP4 encode |
 
 ### The choreography, beat by beat
@@ -57,14 +58,36 @@ python3 -m venv .venv
 | 23 – 25.4 | both reload and throw at the same moment — **clash** |
 | 26 – 30 | last exchange, both throw a rising blow, freeze, drift apart, fade out |
 
-### Motion rules
+### Why the motion reads as human (v2)
 
-* every strike is keyed wind-up → 2–3 frame travel (`snap` easing) → recovery;
-* feet stay planted through punches and step with them;
-* impact stars are not hand-placed — the code measures which fist is nearest the
-  other head at the contact frame and draws the star on that point;
-* hits add shake, a short zoom kick and a struck-pose on the receiver;
-* audio is synthesised (sub-thump impacts, swept-noise whooshes, a pulse bed) —
+The first pass animated *poses*: two key poses and a straight blend, which is why
+it looked like a puppet. It now animates **channels**, the way a real body is put
+together:
+
+* **Feet are simulated, not posed.** Each foot is planted at a spot; when the
+  pelvis drifts too far from the stance the far foot swings across in 0.17 s. So
+  stepping appears automatically when a fighter advances, retreats or gets
+  pushed, and a planted foot never slides.
+* **Hip height comes from the stance.** The pelvis sits just inside full leg
+  extension over the planted foot (0.985), which is a ~10° knee bend. Earlier
+  versions dropped the hips 10–20 units, folded the legs and made a diamond.
+* **Knees and elbows are chosen anatomically.** The IK has two solutions; the
+  code picks the one whose knee points forward / whose elbow hangs low, instead
+  of forcing a bend flag.
+* **Drag.** Hands are sampled 1 frame late and the head 2 frames late relative to
+  the hips, so fast direction changes whip the head and the hands trail the body.
+* **Idle is layered on top.** A 1.15 Hz bounce on the balls of the feet, a slow
+  weight shift between the feet and a breath cycle; the hands lag that bounce by
+  two frames. Nothing is ever perfectly still.
+* **Distance is enforced, not eyeballed.** After the beats are keyed, the pair is
+  separated until their heads are at least 150 units apart (baked at 1/20 s so
+  the spline cannot dip back through), and every strike target is then resolved
+  against the defender's *final* head position with the arm clamped to its real
+  reach.
+* **Strikes dissolve the pose.** A punch is a hand target plus a root that keeps
+  travelling through the contact frame, then recovers; the body never freezes in
+  a "punch pose".
+* Audio is synthesised (sub-thump impacts, swept-noise whooshes, a pulse bed) —
   no samples, so nothing to license.
 
 ## Status

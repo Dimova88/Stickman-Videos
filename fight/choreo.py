@@ -1,451 +1,369 @@
-"""The fight: 30 seconds, two Pivot figures, one continuous choreography.
+"""The fight, authored as motion channels rather than as poses.
 
-Everything is authored in the app's 960x540 design space with the floor at
-y = 432. A pose is described by where the hands and feet are, not by joint
-angles — that is the only way a fight reads as contact rather than as flailing.
+Read the table at the bottom for the beat sheet. Two rules govern the numbers:
 
-Style rules kept throughout:
+* **Distance is earned.** Every strike starts with a step that closes the gap and
+  a root that keeps travelling *through* the punch, then settles back. Fighters
+  that stay at one distance have to teleport their arms.
+* **The defender moves first.** A punch is authored as a target on the defender's
+  head *at the contact frame*, resolved after both fighters' bodies are keyed, so
+  the fist goes where the head actually is.
 
-* every strike has a wind-up, a 2–3 frame travel and a 4–6 frame recovery;
-* the guard never opens between beats — the free hand stays near the head;
-* feet stay planted while punching, and step *with* the punch;
-* each hit is a single readable silhouette at the moment of contact.
+Feet are simulated (``motion.Feet``): planted until the body drifts too far, then
+one foot swings across, so steps appear by themselves when someone advances,
+retreats, or gets pushed.
 """
 from __future__ import annotations
 
 import math
 
-from .core import Pose, Track, pose_from_targets, clamp, solve
+from .core import clamp
+from .motion import HIP, Performer, Scalar
 
 GROUND = 432.0
-HIP = 129.0  # leg length: hip to sole
 FPS = 24
 DURATION = 30.0
-
 RED = (186, 54, 50)
 BLUE = (38, 84, 148)
 
-
-def hip_y(ground=GROUND, crouch: float = 0.0) -> float:
-    return ground - HIP + crouch
-
-
-def P(x: float, *, ground: float = GROUND, facing: int = 1, crouch: float = 0.0,
-      lean: float = 0.0, scale: float = 1.0, head_turn: float = 0.0,
-      ha=(30, -52), hb=(10, -44), fa=(26, 0), fb=(-28, 0),
-      elbow_a=1.0, elbow_b=-1.0, knee_a=1.0, knee_b=1.0, torso_off: float = 0.0) -> Pose:
-    """A pose described in *facing space*: dx forward is positive, y from the hip."""
-    y = hip_y(ground, crouch)
-    torso = -math.pi / 2 + lean + torso_off
-
-    def w(dx, dy):
-        return (x + facing * dx, y + dy)
-
-    foot_a = w(fa[0], fa[1] + HIP - crouch)
-    foot_b = w(fb[0], fb[1] + HIP - crouch)
-    return pose_from_targets(x, y, facing=facing, scale=scale, torso=torso, head_turn=head_turn,
-                             hand_a=w(*ha), hand_b=w(*hb), foot_a=foot_a, foot_b=foot_b,
-                             elbow_a=elbow_a, elbow_b=elbow_b, knee_a=knee_a, knee_b=knee_b)
+# hand targets are (forward, up) in the fighter's own facing space, measured from
+# the shoulder; the arm can reach 101 units, so anything past ~95 is a full commit
+# A boxer's guard: lead hand out in front of the face, rear hand at the chin.
+# Hands sit 45-60 units from the shoulder so the arms fold like arms, not springs.
+GUARD = dict(ha=(52, -22), hb=(30, 12))
+GUARD_HIGH = dict(ha=(56, -32), hb=(32, 4))
+GUARD_TIGHT = dict(ha=(42, -12), hb=(26, 16))
+RELAXED = dict(ha=(34, 4), hb=(16, 20))
 
 
-# ---------------------------------------------------------------- pose library
-def _pose(x, ground, facing, base, kw):
-    d = dict(base)
-    d.update(kw)
-    return P(x, ground=ground, facing=facing, **d)
-
-
-def guard(x, facing=1, ground=GROUND, **kw):
-    return _pose(x, ground, facing,
-                 dict(crouch=6.0, lean=-0.05, ha=(46, -64), hb=(22, -50), fa=(36, 0), fb=(-34, 0),
-                      elbow_a=1.0, elbow_b=-1.0, head_turn=-0.05 * facing), kw)
-
-
-def idle(x, facing=1, bob=0.0, ground=GROUND, **kw):
-    return _pose(x, ground, facing,
-                 dict(crouch=bob * 3.0, lean=-0.02, ha=(34, -58), hb=(10, -46),
-                      fa=(32, 0), fb=(-32, 0)), kw)
-
-
-def jab_out(x, facing=1, reach=118, ground=GROUND, **kw):
-    """Front hand thrown straight, rear hand stays home."""
-    return _pose(x, ground, facing,
-                 dict(lean=0.10, ha=(reach, -72), hb=(20, -52), fa=(40, 0), fb=(-24, 0),
-                      elbow_a=1.0), kw)
-
-
-def cross_out(x, facing=1, reach=126, ground=GROUND, **kw):
-    """Rear hand thrown straight through the target."""
-    return _pose(x, ground, facing,
-                 dict(lean=0.16, ha=(22, -56), hb=(reach - 4, -78), fa=(44, 0), fb=(-18, 0),
-                      elbow_b=-1.0), kw)
-
-
-def hook_out(x, facing=1, ground=GROUND, **kw):
-    return _pose(x, ground, facing,
-                 dict(lean=0.12, crouch=8, ha=(56, -88), hb=(48, -94), fa=(40, 0),
-                      fb=(-24, 0), elbow_b=-1.0), kw)
-
-
-def uppercut_out(x, facing=1, ground=GROUND, **kw):
-    return _pose(x, ground, facing,
-                 dict(lean=-0.18, crouch=-6, ha=(62, -102), hb=(24, -54), fa=(32, 0),
-                      fb=(-26, 0)), kw)
-
-
-def block_high(x, facing=1, ground=GROUND, **kw):
-    """Forearm up in front of the face, elbow tight."""
-    return _pose(x, ground, facing,
-                 dict(crouch=4, lean=-0.10, ha=(52, -96), hb=(20, -62), fa=(30, 0),
-                      fb=(-32, 0), elbow_a=-1.0), kw)
-
-
-def block_mid(x, facing=1, ground=GROUND, **kw):
-    return _pose(x, ground, facing,
-                 dict(crouch=5, lean=-0.04, ha=(54, -78), hb=(18, -60), fa=(30, 0),
-                      fb=(-32, 0), elbow_a=-1.0), kw)
-
-
-def block_low(x, facing=1, ground=GROUND, **kw):
-    return _pose(x, ground, facing,
-                 dict(crouch=12, lean=0.02, ha=(50, -50), hb=(16, -44), fa=(32, 0),
-                      fb=(-34, 0), elbow_a=-1.0), kw)
-
-
-def duck(x, facing=1, ground=GROUND, **kw):
-    return _pose(x, ground, facing,
-                 dict(crouch=40, lean=0.26, ha=(40, -46), hb=(14, -40), fa=(38, 0),
-                      fb=(-26, 0)), kw)
-
-
-def lean_back(x, facing=1, ground=GROUND, **kw):
-    return _pose(x, ground, facing,
-                 dict(crouch=10, lean=-0.34, ha=(26, -64), hb=(4, -52), fa=(6, 0),
-                      fb=(-46, 0)), kw)
-
-
-def kick_low(x, facing=1, ground=GROUND, **kw):
-    """Rear-leg low kick: the shin goes out at knee height."""
-    return _pose(x, ground, facing,
-                 dict(crouch=6, lean=-0.22, ha=(18, -72), hb=(-4, -60), fa=(22, 0),
-                      fb=(98, -18), knee_b=1.0), kw)
-
-
-def kick_mid(x, facing=1, ground=GROUND, **kw):
-    return _pose(x, ground, facing,
-                 dict(crouch=2, lean=-0.30, ha=(10, -78), hb=(-10, -66), fa=(20, 0),
-                      fb=(122, -52), knee_b=1.0), kw)
-
-
-def kick_high(x, facing=1, ground=GROUND, **kw):
-    return _pose(x, ground, facing,
-                 dict(crouch=-2, lean=-0.40, ha=(0, -82), hb=(-18, -70), fa=(16, 0),
-                      fb=(112, -104), knee_b=1.0), kw)
-
-
-def knee_strike(x, facing=1, ground=GROUND, **kw):
-    return _pose(x, ground, facing,
-                 dict(crouch=-10, lean=0.04, ha=(44, -88), hb=(24, -84), fa=(6, 0),
-                      fb=(44, -64), knee_b=1.0), kw)
-
-
-def jump_up(x, facing=1, ground=GROUND, height=0.0, **kw):
-    """Airborne: both feet tucked under the body."""
-    return _pose(x, ground, facing,
-                 dict(crouch=height, ha=(38, -74), hb=(14, -62), fa=(34, -34), fb=(-20, -46)), kw)
-
-
-def air_kick(x, facing=1, ground=GROUND, height=0.0, reach=110.0, **kw):
-    return _pose(x, ground, facing,
-                 dict(crouch=height, lean=-0.24, ha=(20, -78), hb=(-2, -68), fa=(18, -60),
-                      fb=(reach, -70), knee_b=1.0), kw)
-
-
-def hit_head(x, facing=1, ground=GROUND, **kw):
-    """Struck: head and torso snap away from the blow."""
-    return _pose(x, ground, facing,
-                 dict(crouch=8, lean=-0.42, ha=(-6, -76), hb=(-24, -64), fa=(-6, 0),
-                      fb=(-44, 0)), kw)
-
-
-def hit_body(x, facing=1, ground=GROUND, **kw):
-    return _pose(x, ground, facing,
-                 dict(crouch=18, lean=0.34, ha=(24, -54), hb=(2, -46), fa=(16, 0),
-                      fb=(-40, 0)), kw)
-
-
-def clinch(x, facing=1, ground=GROUND, **kw):
-    return _pose(x, ground, facing,
-                 dict(crouch=6, lean=0.16, ha=(58, -84), hb=(46, -74), fa=(34, 0),
-                      fb=(-30, 0), elbow_b=-1.0), kw)
-
-
-def shove(x, facing=1, ground=GROUND, **kw):
-    return _pose(x, ground, facing,
-                 dict(lean=0.26, crouch=0, ha=(72, -80), hb=(60, -70), fa=(44, 0),
-                      fb=(-24, 0)), kw)
-
-
-def landing(x, facing=1, ground=GROUND, **kw):
-    return _pose(x, ground, facing,
-                 dict(crouch=26, lean=0.10, ha=(40, -54), hb=(16, -46), fa=(38, 0),
-                      fb=(-34, 0)), kw)
-
-
-def spin_back(x, facing=1, ground=GROUND, **kw):
-    return _pose(x, ground, facing,
-                 dict(crouch=4, lean=0.0, ha=(-34, -84), hb=(-52, -66), fa=(22, 0),
-                      fb=(-30, 0)), kw)
-
-
-# ------------------------------------------------------------------ the fight
 def build() -> dict:
-    """Return the scene: two tracks, the camera, and the effect events."""
-    a = Track(guard(352, facing=1))
-    b = Track(guard(612, facing=-1))
+    a = Performer(372.0, GROUND, facing=1)
+    b = Performer(596.0, GROUND, facing=-1)
 
-    # Everything is authored at "contact range"; SPREAD opens the distance so
-    # two figures with 100-unit arms still read as two figures, not one blob.
-    SPREAD = 1.45
+    events: list[dict] = []
 
-    def spread(pose):
-        return pose.copy(x=480.0 + (pose.x - 480.0) * SPREAD)
+    def spark(t, size=1.0, kind="spark"):
+        events.append({"t": t, "kind": kind, "size": size})
 
-    def A(t, pose, ease="smooth"):
-        a.key(t, spread(pose), ease)
+    def whoosh(t, dur=0.16, size=1.0, direction=1, y=-10):
+        events.append({"t": t, "kind": "whoosh", "dur": dur, "size": size,
+                       "dir": direction, "y": y})
 
-    def B(t, pose, ease="smooth"):
-        b.key(t, spread(pose), ease)
-
-    events = []
-
-    def hit(t, x, y, size=1.0, kind="spark"):
-        events.append({"t": t, "kind": kind, "x": x, "y": y, "size": size})
-
-    def whoosh(t, x, y, dur=0.18, size=1.0, direction=1):
-        events.append({"t": t, "kind": "whoosh", "x": x, "y": y, "size": size,
-                       "dir": direction, "dur": dur})
-
-    def dust(t, x, y, size=1.0):
-        events.append({"t": t, "kind": "dust", "x": x, "y": y, "size": size})
+    def dust(t, size=1.0):
+        events.append({"t": t, "kind": "dust", "size": size})
 
     def shake(t, amp=1.0, dur=0.25, kick=0.0):
         events.append({"t": t, "kind": "shake", "amp": amp, "dur": dur, "kick": kick})
 
-    # ---- 0: stand-off ---------------------------------------------------
-    A(0.0, idle(356, 1), "smooth")
-    B(0.0, idle(604, -1), "smooth")
-    for i in range(1, 5):
-        t = i * 0.55
-        A(t, idle(356 + 2 * (-1) ** i, 1, bob=0.4 if i % 2 else -0.2), "smooth")
-        B(t, idle(604 + 2 * (1) ** i, -1, bob=-0.2 if i % 2 else 0.4), "smooth")
-    A(2.2, guard(366, 1))
-    B(2.2, guard(592, -1))
+    def flash(t, size=1.0):
+        events.append({"t": t, "kind": "flash", "size": size})
 
-    # ---- 1: A steps in with a jab, B parries ---------------------------
-    A(2.75, guard(424, 1, crouch=4))          # step in
-    B(2.75, guard(588, -1))
-    whoosh(2.9, 430, 330, size=0.8, direction=1)
-    A(3.05, jab_out(436, 1, reach=112), "snap")
-    B(3.05, block_high(586, -1), "snap")
-    hit(3.05, 520, 322, 0.55)
-    A(3.35, guard(428, 1), "smooth")
-    B(3.35, guard(586, -1))
+    # strikes are recorded now and aimed at the defender's head afterwards
+    aims: list[dict] = []
 
-    # ---- 2: cross, B slips and counters --------------------------------
-    A(3.95, cross_out(486, 1, reach=128), "snap")
-    whoosh(3.85, 440, 320, size=0.9, direction=1)
-    B(4.05, lean_back(592, -1), "snap")
-    B(4.35, hit_head(600, -1), "smooth")      # grazing, head turns
-    hit(4.12, 540, 318, 0.5)
-    shake(4.12, 0.5, 0.18)
-    A(4.6, guard(446, 1))
+    def strike(t, att: Performer, dfd: Performer, *, hand="b", size=0.8, off=(0, 0),
+               ease="snap", recover=0.20, guard=None):
+        """Throw a hand at the defender's head at time ``t`` and snap it back."""
+        aims.append(dict(t=t, att=att, dfd=dfd, hand=hand, off=off, ease=ease,
+                         recover=recover, guard=guard))
+        return t
 
-    # ---- 3: B counter body kick, A blocks with the shin ----------------
-    B(5.0, kick_mid(586, -1), "snap")
-    whoosh(4.95, 520, 350, size=1.1, direction=-1)
-    A(5.05, block_low(452, 1, crouch=10), "snap")
-    hit(5.05, 486, 356, 0.8)
-    shake(5.05, 0.8, 0.22, kick=0.03)
-    A(5.5, guard(450, 1))
-    B(5.6, guard(592, -1))
+    # ================================================================ opening
+    # both breathe and shift weight; the camera pushes in
+    a.key_pose(0.0, root=372, lean=-0.05, crouch=3, **GUARD)
+    b.key_pose(0.0, root=596, lean=-0.05, crouch=3, **GUARD)
+    a.key_pose(1.1, lean=-0.02, crouch=2, **GUARD_HIGH)
+    b.key_pose(1.3, lean=-0.02, crouch=2, **GUARD_HIGH)
+    a.key_pose(2.1, root=384, lean=-0.06, crouch=4, **GUARD)
+    b.key_pose(2.1, root=588, crouch=2, **GUARD)
 
-    # ---- 4: two quick jabs, both parried ------------------------------
-    A(6.15, jab_out(456, 1, reach=104), "snap")
-    B(6.15, block_mid(584, -1), "snap")
-    hit(6.15, 512, 336, 0.4)
-    A(6.45, guard(456, 1))
-    A(6.85, cross_out(464, 1, reach=110), "snap")
-    B(6.9, block_high(578, -1), "snap")
-    hit(6.9, 510, 326, 0.5)
-    A(7.25, guard(458, 1))
-    B(7.3, guard(578, -1))
+    # ================================================================ jab (parried)
+    a.key_pose(2.55, root=414, lean=-0.02, crouch=5, ha=(10, -10), hb=(6, 6), ease="out")
+    b.key_pose(2.55, root=586, **GUARD_HIGH)
+    whoosh(2.72, direction=1)
+    strike(2.86, a, b, hand="a", size=0.5, off=(6, -6))
+    b.key_pose(2.86, lean=-0.10, crouch=4, **GUARD_HIGH, ease="snap")
+    spark(2.86, 0.5)
+    a.key_pose(3.06, root=418, lean=0.02, crouch=4, **GUARD)
+    b.key_pose(3.10, root=590, **GUARD_HIGH)
 
-    # ---- 5: B leaps in with an overhead, A ducks ----------------------
-    B(7.8, guard(572, -1, crouch=16))
-    B(8.15, jump_up(556, -1, ground=GROUND, height=-46))
-    B(8.45, air_kick(524, -1, height=-40, reach=-104), "snap")
-    whoosh(8.35, 520, 300, size=1.2, direction=-1)
-    A(8.5, duck(470, 1), "snap")
-    B(8.8, landing(500, -1))
-    dust(8.8, 500, GROUND, 1.0)
-    shake(8.8, 0.9, 0.25)
-    A(9.0, guard(462, 1))
-    B(9.15, guard(516, -1))
+    # ================================================================ cross (slipped)
+    a.key_pose(3.55, root=440, lean=-0.10, crouch=6, ha=(6, -4), hb=(14, 4), ease="out")
+    whoosh(3.72, direction=1)
+    strike(3.86, a, b, hand="b", size=0.45, off=(0, -2))
+    b.key_pose(3.80, root=602, lean=-0.26, crouch=3, ha=(18, -16), hb=(4, 2), ease="snap")
+    b.key_pose(4.20, root=598, lean=-0.10, crouch=4, **GUARD)
+    a.key_pose(4.30, root=428, lean=0.04, crouch=3, **GUARD)
 
-    # ---- 6: clinch -----------------------------------------------------
-    A(9.7, clinch(445, 1))
-    B(9.7, clinch(522, -1))
-    A(10.4, clinch(448, 1, crouch=10))
-    B(10.4, clinch(520, -1, crouch=10))
-    A(11.0, shove(452, 1))
-    B(11.0, shove(510, -1))
-    shake(10.9, 0.5, 0.3)
-    A(11.6, guard(452, 1))
-    B(11.7, guard(534, -1))
+    # ================================================================ B body kick
+    b.key_pose(4.75, root=570, lean=-0.22, crouch=1, ha=(4, -4), hb=(-16, 10), ease="out")
+    whoosh(4.95, direction=-1, dur=0.2, y=26)
+    b.feet.kick(4.95, 5.42, 0, (a.head_at(5.16)[0] - 30, GROUND - 74.0), arc=18)
+    a.key_pose(5.02, root=436, lean=0.16, crouch=8, ha=(20, 2), hb=(6, 16), ease="snap")
+    spark(5.16, 0.85)
+    shake(5.16, 0.8, 0.24, kick=0.03)
+    b.key_pose(5.42, root=576, lean=-0.06, crouch=3, **GUARD)
+    a.key_pose(5.55, root=430, lean=0.04, crouch=4, **GUARD)
 
-    # ---- 7: A knees, then spins a backfist into B's guard --------------
-    A(12.2, knee_strike(452, 1), "snap")
-    B(12.25, block_low(530, -1, crouch=12), "snap")
-    hit(12.2, 500, 352, 0.7)
-    shake(12.2, 0.7, 0.2)
-    A(12.6, guard(466, 1))
-    A(13.0, spin_back(474, 1), "smooth")
-    whoosh(13.05, 500, 316, size=0.9, direction=1)
-    A(13.4, hook_out(462, 1), "snap")
-    B(13.45, block_high(556, -1), "snap")
-    hit(13.40, 516, 328, 1.0)
-    shake(13.45, 1.2, 0.3, kick=0.06)
-    A(13.9, guard(470, 1))
-    B(14.0, guard(552, -1))
+    # ================================================================ two jabs, both read
+    a.key_pose(5.95, root=452, lean=-0.04, crouch=4, **GUARD)
+    b.key_pose(5.95, root=582, **GUARD_HIGH)
+    whoosh(6.06, direction=1)
+    strike(6.18, a, b, hand="a", size=0.35, off=(4, -6))
+    b.key_pose(6.18, lean=-0.08, **GUARD_HIGH, ease="snap")
+    spark(6.18, 0.35)
+    a.key_pose(6.34, root=456, **GUARD)
+    whoosh(6.46, direction=1)
+    strike(6.58, a, b, hand="b", size=0.45, off=(2, -4))
+    b.key_pose(6.58, lean=-0.12, **GUARD_TIGHT, ease="snap")
+    spark(6.58, 0.45)
+    a.key_pose(6.78, root=450, **GUARD)
+    b.key_pose(6.86, root=578, **GUARD)
 
-    # ---- 8: B sweeps low, A jumps it ----------------------------------
-    B(14.5, kick_low(536, -1), "snap")
-    whoosh(14.45, 500, 392, size=1.0, direction=-1)
-    A(14.55, jump_up(478, 1, ground=GROUND, height=-40), "snap")
-    A(14.9, jump_up(470, 1, ground=GROUND, height=-56))
-    A(15.25, jump_up(462, 1, ground=GROUND, height=-44))
-    A(15.6, landing(452, 1), "snap")
-    dust(15.6, 452, GROUND, 0.8)
-    B(15.0, guard(540, -1))
+    # ================================================================ B steps in, hook + duck
+    b.key_pose(7.30, root=556, lean=0.06, crouch=4, ha=(24, -2), hb=(12, 8), ease="out")
+    whoosh(7.46, direction=-1)
+    strike(7.58, b, a, hand="b", size=0.5, off=(0, -6))
+    a.key_pose(7.56, root=444, crouch=15, lean=0.26, ha=(16, 6), hb=(4, 16), ease="snap")
+    spark(7.58, 0.4)
+    b.key_pose(7.84, root=552, lean=0.10, crouch=4, **GUARD_HIGH)
+    a.key_pose(7.96, root=446, crouch=3, lean=-0.04, **GUARD)
 
-    # ---- 9: B catches A's kick and shoves -----------------------------
-    A(16.1, kick_mid(470, 1), "snap")
-    B(16.15, block_mid(520, -1, crouch=6), "snap")
-    hit(16.1, 500, 340, 0.8)
-    shake(16.1, 0.8, 0.22)
-    A(16.6, clinch(446, 1))
-    B(16.65, clinch(524, -1))
-    B(17.1, shove(536, -1), "snap")
-    A(17.15, lean_back(432, 1), "snap")
-    whoosh(17.05, 490, 320, size=1.1, direction=1)
-    A(17.7, guard(418, 1))
-    B(17.8, guard(520, -1))
+    # ================================================================ A uppercut lands
+    a.key_pose(8.22, root=470, lean=0.10, crouch=8, ha=(10, 14), hb=(6, 12), ease="out")
+    whoosh(8.34, direction=1)
+    strike(8.46, a, b, hand="b", size=1.0, off=(-2, 10), guard=None)
+    b.key_pose(8.50, root=566, lean=-0.30, crouch=1, ha=(10, -18), hb=(-6, -6), ease="snap")
+    spark(8.46, 1.0)
+    shake(8.46, 1.2, 0.3, kick=0.05)
+    a.key_pose(8.74, root=478, lean=-0.06, crouch=4, **GUARD)
+    b.key_pose(8.95, root=570, lean=-0.10, crouch=4, **GUARD_HIGH)
 
-    # ---- 10: reset, circling ------------------------------------------
-    A(18.6, guard(404, 1, crouch=4))
-    B(18.6, guard(534, -1, crouch=4))
-    A(19.4, guard(398, 1))
-    B(19.4, guard(540, -1))
+    # ================================================================ clinch, shove
+    a.key_pose(9.40, root=494, lean=0.08, crouch=5, ha=(34, -6), hb=(26, 4), ease="out")
+    b.key_pose(9.40, root=546, lean=0.10, crouch=5, ha=(34, -6), hb=(26, 4), ease="out")
+    a.key_pose(9.95, root=500, lean=0.14, crouch=7, ha=(38, -2), hb=(30, 8))
+    b.key_pose(9.95, root=542, lean=0.14, crouch=7, ha=(38, -2), hb=(30, 8))
+    a.key_pose(10.45, root=478, lean=-0.14, crouch=2, ha=(20, -12), hb=(10, 0), ease="out")
+    b.key_pose(10.45, root=560, lean=-0.14, crouch=2, ha=(20, -12), hb=(10, 0), ease="out")
+    f = 10.42
+    events.append({"t": f, "kind": "spark", "size": 0.3})
+    shake(10.42, 0.4, 0.28)
+    a.key_pose(11.0, root=470, lean=-0.04, crouch=3, **GUARD)
+    b.key_pose(11.0, root=566, lean=-0.04, crouch=3, **GUARD)
 
-    # ---- 11: final exchange, three clashes ----------------------------
-    A(20.1, jab_out(424, 1, reach=112), "snap")
-    B(20.1, block_high(516, -1), "snap")
-    hit(20.1, 478, 322, 0.7)
-    shake(20.1, 0.6, 0.2)
-    A(20.5, guard(436, 1))
-    B(20.5, guard(504, -1))
-    B(21.0, kick_mid(510, -1), "snap")
-    whoosh(20.95, 470, 340, size=1.0, direction=-1)
-    A(21.05, block_low(452, 1), "snap")
-    hit(21.05, 486, 344, 0.8)
-    shake(21.05, 0.8, 0.22)
-    A(21.5, guard(450, 1))
-    B(21.55, guard(524, -1))
-    A(22.05, hook_out(456, 1), "snap")
-    B(22.08, block_high(548, -1), "snap")
-    hit(22.05, 492, 322, 1.0)
-    shake(22.05, 1.1, 0.28)
+    # ================================================================ knee, backfist
+    a.key_pose(11.45, root=488, lean=0.16, crouch=1, ha=(24, 4), hb=(16, 10), ease="out")
+    b.key_pose(11.45, root=548, lean=-0.10, crouch=5, **GUARD_TIGHT)
+    a.feet.kick(11.55, 11.95, 1, (b.head_at(11.7)[0] - 52, GROUND - 62.0), arc=14)
+    whoosh(11.6, direction=1, dur=0.14, y=30)
+    spark(11.74, 0.75)
+    shake(11.74, 0.7, 0.2, kick=0.03)
+    b.key_pose(11.74, crouch=9, lean=0.24, ease="snap")
+    a.key_pose(12.0, root=492, lean=0.02, crouch=4, **GUARD)
+    b.key_pose(12.05, root=552, lean=-0.02, crouch=5, **GUARD_HIGH)
 
-    # ---- 12: both reload, then throw at the same time -----------------
-    A(22.7, lean_back(452, 1))
-    B(22.7, lean_back(516, -1))
-    A(23.3, guard(446, 1))
-    B(23.3, guard(520, -1))
-    A(23.9, idle(444, 1, bob=0.5))
-    B(23.9, idle(522, -1, bob=0.5))
-    A(24.6, guard(450, 1, crouch=8))
-    B(24.6, guard(516, -1, crouch=8))
+    # spin-ish backfist: the hand starts behind the head, then whips across
+    a.key_pose(12.35, root=496, lean=-0.16, crouch=5, ha=(-6, -18), hb=(20, -10), ease="out")
+    whoosh(12.5, direction=1, dur=0.14)
+    strike(12.62, a, b, hand="b", size=1.0, off=(0, -4))
+    b.key_pose(12.62, root=560, lean=-0.22, crouch=4, ha=(16, -14), hb=(4, 0), ease="snap")
+    spark(12.62, 1.0)
+    shake(12.62, 1.1, 0.3, kick=0.05)
+    a.key_pose(12.92, root=486, lean=-0.02, crouch=4, **GUARD)
+    b.key_pose(13.1, root=566, lean=-0.06, crouch=4, **GUARD_HIGH)
 
-    # the charge
-    A(25.3, cross_out(452, 1, reach=124), "snap")
-    B(25.35, cross_out(522, -1, reach=124), "snap")
-    whoosh(25.2, 470, 320, size=1.2, direction=1)
-    whoosh(25.25, 500, 320, size=1.2, direction=-1)
-    hit(25.42, 487, 320, 1.05)
-    shake(25.42, 2.0, 0.45, kick=0.08)
-    events.append({"t": 25.42, "kind": "flash", "x": 487, "y": 320, "size": 1.4})
+    # ================================================================ sweep, jumped
+    b.key_pose(13.45, root=556, lean=0.18, crouch=8, ha=(10, 2), hb=(0, 12), ease="out")
+    whoosh(13.6, direction=-1, dur=0.2, y=44)
+    b.feet.kick(13.62, 14.05, 0, (a.root.at(13.8) + 24, GROUND - 46.0), arc=10)
+    a.feet.jump(13.66, 14.12, 26.0)
+    a.key_pose(13.66, root=482, lean=-0.10, crouch=-8, ha=(14, -10), hb=(2, 2), ease="snap")
+    a.key_pose(13.95, root=486, lean=-0.04, crouch=-4, ha=(16, -6), hb=(4, 4))
+    dust(14.12, 0.6)
+    a.key_pose(14.16, root=488, lean=0.10, crouch=12, ha=(18, 4), hb=(6, 14), ease="snap")
+    b.key_pose(14.1, root=558, lean=-0.04, crouch=4, **GUARD)
+    a.key_pose(14.5, root=492, lean=-0.02, crouch=4, **GUARD)
 
-    # both recoil, then reset for the last blow
-    A(26.1, hit_head(444, 1))
-    B(26.1, hit_head(534, -1))
-    A(26.7, guard(452, 1))
-    B(26.75, guard(522, -1))
+    # ================================================================ B head kick, A counter
+    b.key_pose(14.85, root=550, lean=-0.16, crouch=2, ha=(6, -8), hb=(-14, 12), ease="out")
+    whoosh(14.98, direction=-1, dur=0.2, y=-40)
+    b.feet.kick(15.0, 15.4, 0, (a.head_at(15.2)[0] - 56, GROUND - 116.0), arc=26)
+    a.key_pose(15.05, root=474, lean=-0.30, crouch=3, ha=(18, -18), hb=(6, -4), ease="snap")
+    b.key_pose(15.4, root=548, lean=-0.06, crouch=4, **GUARD)
+    # counter straight while B is still on one leg
+    a.key_pose(15.62, root=506, lean=0.14, crouch=5, ha=(10, -6), hb=(16, 2), ease="out")
+    whoosh(15.7, direction=1)
+    strike(15.82, a, b, hand="b", size=1.1, off=(0, -6))
+    b.key_pose(15.82, root=562, lean=-0.34, crouch=2, ha=(12, -16), hb=(-4, -4), ease="snap")
+    spark(15.82, 1.1)
+    shake(15.82, 1.3, 0.32, kick=0.06)
+    a.key_pose(16.1, root=500, lean=-0.02, crouch=4, **GUARD)
+    b.key_pose(16.35, root=572, lean=-0.08, crouch=4, **GUARD_HIGH)
 
-    A(27.4, guard(448, 1, crouch=10))
-    B(27.4, guard(540, -1, crouch=10))
-    A(28.0, uppercut_out(442, 1), "snap")
-    B(28.0, uppercut_out(534, -1), "snap")
-    hit(28.05, 487, 300, 1.25)
-    events.append({"t": 28.05, "kind": "flash", "x": 487, "y": 300, "size": 1.8})
-    shake(28.05, 2.4, 0.7, kick=0.10)
+    # ================================================================ circling
+    a.key_pose(17.0, root=488, lean=-0.04, crouch=4, **GUARD)
+    b.key_pose(17.0, root=576, lean=-0.04, crouch=4, **GUARD)
+    a.key_pose(18.0, root=496, lean=-0.02, crouch=3, **GUARD_HIGH)
+    b.key_pose(18.0, root=570, lean=-0.02, crouch=3, **GUARD_HIGH)
 
-    # hold the freeze, then drift apart
-    A(28.6, uppercut_out(442, 1), "linear")
-    B(28.6, uppercut_out(534, -1), "linear")
-    A(29.4, lean_back(440, 1))
-    B(29.4, lean_back(534, -1))
-    A(30.0, guard(452, 1))
-    B(30.0, guard(522, -1))
+    # ================================================================ exchange
+    b.key_pose(18.4, root=560, lean=0.06, ha=(18, -2), hb=(12, 8), ease="out")
+    whoosh(18.5, direction=-1)
+    strike(18.62, b, a, hand="b", size=0.5, off=(0, -6))
+    a.key_pose(18.6, root=486, lean=-0.12, crouch=5, **GUARD_HIGH, ease="snap")
+    spark(18.62, 0.5)
+    b.key_pose(18.86, root=562, **GUARD)
+    a.key_pose(19.06, root=512, lean=0.12, crouch=5, ha=(8, -4), hb=(16, 2), ease="out")
+    whoosh(19.16, direction=1)
+    strike(19.28, a, b, hand="b", size=0.6, off=(0, -4))
+    b.key_pose(19.26, root=574, lean=-0.20, crouch=3, **GUARD_HIGH, ease="snap")
+    spark(19.28, 0.6)
+    a.key_pose(19.55, root=506, **GUARD)
+    b.key_pose(19.6, root=576, **GUARD)
 
-    # ---- camera --------------------------------------------------------
-    camera = [
-        # t,     x,    y,   zoom
-        (0.0, 482, 268, 1.02),
-        (4.6, 486, 266, 1.10),
-        (8.0, 486, 268, 1.04),
-        (10.5, 488, 266, 1.14),
-        (13.5, 490, 266, 1.08),
-        (17.0, 482, 272, 1.02),
-        (20.0, 486, 268, 1.08),
-        (24.0, 486, 268, 1.04),
-        (28.0, 488, 264, 1.14),
-        (30.0, 488, 268, 1.02),
-    ]
-    # Put every impact star exactly where the strike meets the body: the
-    # choreography is authored by feel, the contact point is measured.
+    # ================================================================ quick 1-2
+    a.key_pose(20.15, root=524, lean=0.02, crouch=4, **GUARD)
+    b.key_pose(20.15, root=566, **GUARD_HIGH)
+    whoosh(20.24, direction=1)
+    strike(20.34, a, b, hand="a", size=0.4, off=(4, -6))
+    b.key_pose(20.34, lean=-0.08, **GUARD_HIGH, ease="snap")
+    spark(20.34, 0.4)
+    a.key_pose(20.52, root=526, **GUARD)
+    whoosh(20.6, direction=1)
+    strike(20.72, a, b, hand="b", size=0.55, off=(2, -2))
+    b.key_pose(20.72, lean=-0.14, **GUARD_TIGHT, ease="snap")
+    spark(20.72, 0.55)
+    a.key_pose(20.95, root=516, **GUARD)
+
+    # ================================================================ reload
+    a.key_pose(21.6, root=506, lean=-0.06, crouch=4, **GUARD)
+    b.key_pose(21.6, root=574, lean=-0.06, crouch=4, **GUARD)
+    a.key_pose(22.4, root=500, lean=-0.10, crouch=6, ha=(10, -14), hb=(2, -2))
+    b.key_pose(22.4, root=578, lean=-0.10, crouch=6, ha=(10, -14), hb=(2, -2))
+    a.key_pose(23.05, root=512, lean=0.06, crouch=3, **GUARD)
+    b.key_pose(23.05, root=566, lean=0.06, crouch=3, **GUARD)
+
+    # ================================================================ clash
+    a.key_pose(23.5, root=534, lean=0.16, crouch=4, ha=(12, -6), hb=(14, 0), ease="out")
+    b.key_pose(23.5, root=548, lean=0.16, crouch=4, ha=(12, -6), hb=(14, 0), ease="out")
+    whoosh(23.62, direction=1)
+    whoosh(23.64, direction=-1)
+    strike(23.76, a, b, hand="a", size=1.5, off=(-2, -24))
+    strike(23.82, b, a, hand="b", size=1.5, off=(2, 4))
+    spark(23.78, 1.0)
+    flash(23.78, 0.6)
+    shake(23.78, 2.0, 0.42, kick=0.07)
+    a.key_pose(24.12, root=492, lean=-0.24, crouch=3, ha=(14, -14), hb=(2, -2), ease="snap")
+    b.key_pose(24.12, root=590, lean=-0.24, crouch=3, ha=(14, -14), hb=(2, -2), ease="snap")
+    a.key_pose(24.7, root=498, lean=-0.04, crouch=4, **GUARD)
+    b.key_pose(24.7, root=584, lean=-0.04, crouch=4, **GUARD)
+
+    # ================================================================ final exchange
+    a.key_pose(25.5, root=508, lean=-0.02, crouch=4, **GUARD)
+    b.key_pose(25.5, root=576, lean=-0.02, crouch=4, **GUARD)
+    a.key_pose(26.1, root=524, lean=0.10, crouch=3, ha=(14, -8), hb=(12, 0), ease="out")
+    b.key_pose(26.1, root=562, lean=0.10, crouch=3, ha=(14, -8), hb=(12, 0), ease="out")
+    a.key_pose(26.9, root=536, lean=0.14, crouch=4, ha=(10, -4), hb=(16, 4), ease="out")
+    b.key_pose(26.9, root=552, lean=0.14, crouch=4, ha=(10, -4), hb=(16, 4), ease="out")
+    whoosh(27.0, direction=1)
+    whoosh(27.02, direction=-1)
+    strike(27.14, a, b, hand="a", size=1.6, off=(-2, -22))
+    strike(27.20, b, a, hand="b", size=1.6, off=(2, 6))
+    spark(27.16, 1.1)
+    flash(27.16, 0.7)
+    shake(27.16, 2.3, 0.45, kick=0.08)
+    a.key_pose(27.55, root=504, lean=-0.20, crouch=4, ha=(10, -12), hb=(0, 0), ease="snap")
+    b.key_pose(27.55, root=584, lean=-0.20, crouch=4, ha=(10, -12), hb=(0, 0), ease="snap")
+
+    # last beat: both drop into a low guard, breathing, and the film fades
+    a.key_pose(28.4, root=500, lean=0.04, crouch=8, ha=(22, 0), hb=(10, 10))
+    b.key_pose(28.4, root=582, lean=0.04, crouch=8, ha=(22, 0), hb=(10, 10))
+    a.key_pose(29.4, root=498, lean=0.02, crouch=6, ha=(20, 2), hb=(8, 12))
+    b.key_pose(29.4, root=580, lean=0.02, crouch=6, ha=(20, 2), hb=(8, 12))
+
+    # ================================================================ resolve aims
+    for s in aims:
+        att, dfd = s["att"], s["dfd"]
+        hx, hy = dfd.head_at(s["t"])
+        sx, sy = att.shoulder_at(s["t"])
+        off = s["off"]
+        dx = (hx + off[0] - sx) * att.facing
+        dy = (hy + off[1] - sy)
+        # the arm cannot reach past ~99; clamp and let the body keep the rest
+        r = math.hypot(dx, dy)
+        if r > 99.0:
+            dx *= 99.0 / r
+            dy *= 99.0 / r
+        trk = att.hand_a if s["hand"] == "a" else att.hand_b
+        trk.key(s["t"], (dx, dy), s["ease"])
+        # snap back to whatever guard the author asked for (or the default)
+        back = s["guard"] or (GUARD["ha"] if s["hand"] == "a" else GUARD["hb"])
+        trk.key(s["t"] + s["recover"], back, "out")
+
+    # ================================================================ keep the distance
+    # Two figures with 100-unit arms need ~150 units between their heads or the
+    # bodies interpenetrate. The author works in beats, not in numbers, so the
+    # pair is separated afterwards: the midpoint of every authored approach is
+    # kept and the gap is opened to the minimum — baked at 1/20 s so the spline
+    # cannot dip back through it between keys.
+    MIN_GAP = 150.0
+    ts = [i / 20.0 for i in range(int(DURATION * 20) + 1)]
+    xs = [(a.root.at(t), b.root.at(t)) for t in ts]
+    for _ in range(3):
+        for i, t in enumerate(ts):
+            xa, xb = xs[i]
+            # heads, not roots: a lean moves the head 30 units
+            ha = a.head_at(t, xa)
+            hb = b.head_at(t, xb)
+            if hb[0] - ha[0] < MIN_GAP:
+                push = (MIN_GAP - (hb[0] - ha[0])) * 0.5
+                xs[i] = (xa - push, xb + push)
+    a.root = Scalar(xs[0][0])
+    b.root = Scalar(xs[0][1])
+    for t, (xa, xb) in zip(ts, xs):
+        a.root.key(t, xa, "smooth")
+        b.root.key(t, xb, "smooth")
+
+    # ================================================================ simulate feet
+    a.feet.simulate(a.root.at, 372.0, DURATION)
+    b.feet.simulate(b.root.at, 596.0, DURATION)
+
+    # place the effect positions from the resolved bodies
     for e in events:
-        if e["kind"] not in ("spark", "flash"):
-            continue
-        pa, pb = a.at(e["t"]), b.at(e["t"])
+        t = e["t"]
+        pa, pb = a.pose_at(t), b.pose_at(t)
+        from .core import solve
         sa, sb = solve(pa), solve(pb)
-        options = []
-        for fist in (sa.pts[4], sa.pts[6], sa.pts[8], sa.pts[10]):
-            options.append((math.dist(fist, sb.head), fist, sb.head))
-        for fist in (sb.pts[4], sb.pts[6], sb.pts[8], sb.pts[10]):
-            options.append((math.dist(fist, sa.head), fist, sa.head))
-        _d, fist, head = min(options, key=lambda o: o[0])
-        k = 0.86 if e.get("kind") == "spark" else 0.5
-        e["x"] = fist[0] + (head[0] - fist[0]) * k
-        e["y"] = fist[1] + (head[1] - fist[1]) * k
+        if e["kind"] in ("spark", "flash"):
+            cands = [((sa.pts[i][0] - sb.head[0]) ** 2 + (sa.pts[i][1] - sb.head[1]) ** 2,
+                      sa.pts[i], sb.head) for i in (4, 6, 8, 10)]
+            cands += [((sb.pts[i][0] - sa.head[0]) ** 2 + (sb.pts[i][1] - sa.head[1]) ** 2,
+                       sb.pts[i], sa.head) for i in (4, 6, 8, 10)]
+            _d, fist, head = min(cands, key=lambda c: c[0])
+            k = 0.8
+            e["x"] = fist[0] + (head[0] - fist[0]) * k
+            e["y"] = fist[1] + (head[1] - fist[1]) * k
+        elif e["kind"] == "whoosh":
+            e["x"] = (sa.head[0] + sb.head[0]) * 0.5 + e.get("dir", 1) * 14
+            e.setdefault("y", -10)
+            e["y"] = 300 + e["y"]
+        elif e["kind"] == "dust":
+            e["x"] = (a.head_at(t)[0] + b.head_at(t)[0]) * 0.5
+            e["y"] = GROUND
 
+    camera = [
+        # t,    cx,  cy, zoom
+        (0.0, 484, 286, 1.06),
+        (4.5, 500, 284, 1.18),
+        (8.0, 505, 286, 1.10),
+        (11.5, 512, 284, 1.22),
+        (14.0, 500, 280, 1.16),
+        (17.5, 494, 288, 1.08),
+        (20.5, 505, 284, 1.16),
+        (23.8, 512, 282, 1.24),
+        (26.0, 520, 284, 1.14),
+        (27.2, 522, 282, 1.28),
+        (30.0, 518, 286, 1.06),
+    ]
     return {"a": a, "b": b, "events": events, "camera": camera}
-
-
-# ---------------------------------------------------------------- air helpers
-def airborne_offset(t: float, t0: float, t1: float, apex: float = 60.0) -> float:
-    """Vertical offset for a jump between t0 and t1 (negative = up)."""
-    if t <= t0 or t >= t1:
-        return 0.0
-    u = (t - t0) / (t1 - t0)
-    return -apex * math.sin(math.pi * u)
