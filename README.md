@@ -16,9 +16,9 @@ limbs. The repository is cloned locally into the (git-ignored)
 `vendor/stykanimate/` folder for reference.
 
 What is new here is the part the app leaves to the mouse: a headless renderer
-with **IK posing by target**. Hands and feet are placed where they should be in
-world space, and the solver works out the joint angles, so a punch lands on a
-chin instead of near it.
+with a **written pose library**. Every stance, punch, block, kick and stumble is
+authored once as a small set of body angles, the leg solver turns a foot position
+into hip/knee/ankle angles, and the fight is those poses keyed over time.
 
 ## Run it
 
@@ -39,58 +39,65 @@ python3 -m venv .venv
 | --- | --- |
 | `fight/core.py` | StykAnimate figure definition, forward kinematics, two-bone IK, pose tracks, easings |
 | `fight/draw.py` | aggdraw renderer: round-cap sticks, flat two-tone backdrop, contact shadows |
-| `fight/choreo.py` | the 30 s choreography — pose library, keyed tracks, camera, hit/hurt events |
-| `fight/motion.py` | channel animation: spline tracks, footwork simulation, drag/lag, idle layer |
-| `fight/film.py` | frame loop, impact stars, whooshes, dust, shake, synthesised audio, MP4 encode |
+| `fight/poses.py` | the pose library: 25 poses (guard, jab, cross, hook, uppercut, kicks, knee, clinch, hit reactions, airborne, tired) |
+| `fight/choreo.py` | the 30 s fight — pose keys + root path per fighter, spacing rules, camera, hit/hurt events |
+| `fight/film.py` | frame loop, impact stars, speed streaks, dust, shake, synthesised audio, MP4 encode |
+| `tools/pose_sheet.py` | renders the whole pose library to one contact sheet — the tool used to check anatomy |
 
 ### The choreography, beat by beat
 
 | time | beat |
 | --- | --- |
-| 0 – 2 | stand-off, both breathing, camera slowly pushes in |
-| 2.7 – 4.6 | red steps in, jab parried, cross slips past |
-| 5 – 7.5 | blue's body kick blocked, two quick jabs, both parried |
-| 7.8 – 9.2 | blue leaps in with a flying kick, red ducks, blue lands |
-| 9.7 – 11.6 | clinch, shove, separation |
-| 12 – 14 | red knees, spins a backfist into blue's guard |
-| 14.5 – 17.8 | blue sweeps low, red jumps it, blue catches the counter and shoves |
-| 18.6 – 22 | circling, then a three-beat exchange |
-| 23 – 25.4 | both reload and throw at the same moment — **clash** |
-| 26 – 30 | last exchange, both throw a rising blow, freeze, drift apart, fade out |
+| 0 – 2.2 | stand-off, both settle into guard, camera creeps in |
+| 2.5 – 4.4 | red's jab is blocked, red's cross slips past blue's head |
+| 4.6 – 7.0 | blue's body kick lands on red's block, then two quick jabs |
+| 7.3 – 9.0 | blue's hook over the top, red ducks under it and lands an uppercut |
+| 9.3 – 10.9 | clinch, chest to chest, then shoved apart |
+| 11.2 – 12.8 | red's knee, red's hook into blue's guard |
+| 13.2 – 16.2 | blue sweeps low, red jumps it, blue's head kick is ducked, red counters |
+| 16.2 – 18.4 | circling |
+| 18.4 – 21.4 | exchange: jab/counter jab, then a fast 1-2 |
+| 21.4 – 23.4 | both reload, settle, breathe |
+| 23.4 – 25.0 | both throw a cross at the same instant — **fists clash**, both snap back |
+| 25.4 – 27.6 | last exchange, both land a rising blow together |
+| 27.8 – 30.0 | both step back, breathe, fade to black |
 
-### Why the motion reads as human (v2)
+### Why the motion reads as human (v3)
 
-The first pass animated *poses*: two key poses and a straight blend, which is why
-it looked like a puppet. It now animates **channels**, the way a real body is put
-together:
+The second pass tried to animate *channels* — a hand target per fighter plus a
+footwork simulation. It still looked wrong, because a hand target says nothing
+about where the elbow or the knee is, and the two-bone solver was free to choose
+a sideways knee or a forearm folded into the face.
 
-* **Feet are simulated, not posed.** Each foot is planted at a spot; when the
-  pelvis drifts too far from the stance the far foot swings across in 0.17 s. So
-  stepping appears automatically when a fighter advances, retreats or gets
-  pushed, and a planted foot never slides.
-* **Hip height comes from the stance.** The pelvis sits just inside full leg
-  extension over the planted foot (0.985), which is a ~10° knee bend. Earlier
-  versions dropped the hips 10–20 units, folded the legs and made a diamond.
-* **Knees and elbows are chosen anatomically.** The IK has two solutions; the
-  code picks the one whose knee points forward / whose elbow hangs low, instead
-  of forcing a bend flag.
-* **Drag.** Hands are sampled 1 frame late and the head 2 frames late relative to
-  the hips, so fast direction changes whip the head and the hands trail the body.
-* **Idle is layered on top.** A 1.15 Hz bounce on the balls of the feet, a slow
-  weight shift between the feet and a breath cycle; the hands lag that bounce by
-  two frames. Nothing is ever perfectly still.
-* **Distance is enforced, not eyeballed.** After the beats are keyed, the pair is
-  separated until their heads are at least 150 units apart (baked at 1/20 s so
-  the spline cannot dip back through), and every strike target is then resolved
-  against the defender's *final* head position with the arm clamped to its real
-  reach.
-* **Strikes dissolve the pose.** A punch is a hand target plus a root that keeps
-  travelling through the contact frame, then recovers; the body never freezes in
-  a "punch pose".
+The current version authors **body angles, not targets**:
+
+* **Feet are given as ground-relative offsets** (±30–34 units fore/aft, plus a
+  height for kicks). A two-bone solve with a *forced forward knee* turns each
+  offset into thigh and shin angles, so a stance always bends the way a stance
+  bends instead of splaying into a diamond.
+* **Hip height comes from the planted foot**, capped at 94 % of full leg
+  extension. That guarantees a visible knee bend without letting the pelvis
+  sink. A lifted foot never carries the hips.
+* **Arms are authored as upper-arm and forearm angles**, clamped to 96 % of the
+  arm's reach. A guard is upper arm ~50°, forearm ~-72°: the fist sits at chin
+  height *in front of* the face, not inside it.
+* **The head is a segment, not a dot.** Its angle follows the spine, so it sits
+  on the neck. This was the single biggest bug in the rejected version: the head
+  circle was drawn one head-radius *forward* of the neck, so every guard read as
+  "fists in the face".
+* **Kicks extend.** A planted leg is solved at 94 % extension, a kicking leg at
+  99.5 % with the foot target 90–110 units from the hip — that is the difference
+  between a kick and a folded leg.
+* **Spacing is enforced, not eyeballed.** The pair is relaxed apart on a 1/10 s
+  grid until the two heads are at least ~176 units apart (~138 in the clinch),
+  with the attacker stepping in for each kick.
+* **Impacts are anchored to the body**, not to empty air: the star is placed on
+  the head or torso the nearest limb is attacking, and on the meeting point of
+  the fists for the two clashes.
 * Audio is synthesised (sub-thump impacts, swept-noise whooshes, a pulse bed) —
   no samples, so nothing to license.
 
 ## Status
 
-30-second test #1. Next: longer choreography, more camera moves, and a second
-fighter archetype.
+30-second test, third pass on the motion. Next: longer choreography, more
+camera moves, and a second fighter archetype.

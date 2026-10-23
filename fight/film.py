@@ -73,7 +73,7 @@ def draw_effects(cv: Canvas, events, t: float, overlay_flash: list):
                 continue
             k = age / life
             grow = 1 - (1 - k) ** 2
-            r = (16 + 30 * size) * u * (0.6 + 0.7 * grow) * (1 - 0.35 * k)
+            r = (13 + 24 * size) * u * (0.6 + 0.7 * grow) * (1 - 0.35 * k)
             alpha = int(255 * (1 - k) ** 0.7)
             rot = 0.4 + e["t"] * 3.0
             # white core with an ink outline: the Pivot-era impact star
@@ -82,29 +82,38 @@ def draw_effects(cv: Canvas, events, t: float, overlay_flash: list):
             cv.disc(c, r * 0.18, (255, 255, 255))
             for i in range(6):
                 a = rot + i * math.pi / 3
-                L = (40 + 120 * size) * u * grow
-                p0 = (c[0] + math.cos(a) * r * 0.8, c[1] + math.sin(a) * r * 0.8)
-                p1 = (c[0] + math.cos(a) * (r * 0.8 + L), c[1] + math.sin(a) * (r * 0.8 + L))
-                cv.line(p0, p1, max(1.5, 4.0 * u), INK, alpha=int(200 * (1 - k)))
+                L = (15 + 40 * size) * u * grow
+                ca, sa_ = math.cos(a), math.sin(a)
+                x0, y0 = c[0] + ca * r * 0.78, c[1] + sa_ * r * 0.78
+                x1, y1 = x0 + ca * L, y0 + sa_ * L
+                w = (2.6 + 1.6 * size) * u
+                poly = [(x0 - sa_ * w, y0 + ca * w), (x0 + sa_ * w, y0 - ca * w),
+                        (x1 + sa_ * w * 0.12, y1 - ca * w * 0.12),
+                        (x1 - sa_ * w * 0.12, y1 + ca * w * 0.12)]
+                cv.polygon(poly, INK, alpha=int(175 * (1 - k) ** 1.2))
         elif e["kind"] == "whoosh":
+            # a tapered speed streak: a thin filled wedge that trails the limb
             life = e.get("dur", 0.18)
-            if age > life:
+            if age > life or size < 0.8:
                 continue
             k = age / life
             d = e.get("dir", 1)
-            base = (e["x"] - d * 40 * k, e["y"] - 12 * k)
             for i in range(3):
-                spread = (i - 1) * 16
-                ln = (70 + 40 * i) * u * (0.6 + 0.8 * (1 - k))
-                a = -0.10 + spread * 0.004
+                spread = (i - 1) * 13
+                ln = (52 + 26 * i) * u * (0.45 + 0.85 * (1 - k))
+                slide = d * 34.0 * u * k
+                taper = 0.35 + 0.65 * (1 - k)
                 pts = []
-                for s in range(4):
-                    f = s / 3
-                    pts.append((base[0] + d * ln * f * 0.9, base[1] + spread * f + math.sin(f * 3) * 4))
-                sp = [cv.wp(p) for p in pts]
-                for s in range(3):
-                    cv.line(sp[s], sp[s + 1], max(1.2, (3.2 - i * 0.6) * u), (120, 116, 108),
-                            alpha=int(150 * (1 - k)))
+                back = []
+                for s_ in range(6):
+                    f = s_ / 5
+                    px = c[0] - d * slide + d * (ln * (f - 0.6))
+                    py = c[1] + spread * 0.35 + math.sin(f * 2.4) * 3.4 * u + spread * 0.5 * f
+                    w = (1.6 + 3.4 * math.sin(math.pi * f) ** 1.2) * u * taper
+                    pts.append((px, py - w))
+                    back.append((px, py + w))
+                poly = [cv.wp(q) for q in pts + back[::-1]]
+                cv.polygon(poly, (120, 116, 108), alpha=int(62 * (1 - k) ** 1.4))
         elif e["kind"] == "dust":
             life = 0.55
             if age > life:

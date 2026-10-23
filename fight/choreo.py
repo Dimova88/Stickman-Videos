@@ -1,24 +1,32 @@
-"""The fight, authored as motion channels rather than as poses.
+"""The 30-second fight, authored as poses over time.
 
-Read the table at the bottom for the beat sheet. Two rules govern the numbers:
+Each fighter is a list of (time, pose, ease) keys plus a root-x channel. Poses
+come from ``poses.py``; foot locking is applied afterwards so a planted foot
+stays planted while the body travels over it.
 
-* **Distance is earned.** Every strike starts with a step that closes the gap and
-  a root that keeps travelling *through* the punch, then settles back. Fighters
-  that stay at one distance have to teleport their arms.
-* **The defender moves first.** A punch is authored as a target on the defender's
-  head *at the contact frame*, resolved after both fighters' bodies are keyed, so
-  the fist goes where the head actually is.
-
-Feet are simulated (``motion.Feet``): planted until the body drifts too far, then
-one foot swings across, so steps appear by themselves when someone advances,
-retreats, or gets pushed.
+Beat sheet
+----------
+ 0.0 - 2.2   stand-off, both settling into guard
+ 2.2 - 5.2   lead jab (blocked), rear cross (slips past)
+ 5.2 - 7.6   body kick blocked, two quick jabs
+ 7.6 - 9.4   hook slips over the head, uppercut lands
+ 9.4 -11.6   clinch, shove apart
+11.6 -13.6   knee, then a hook into the guard
+13.6 -16.2   low sweep jumped, head kick ducked, counter cross lands
+16.2 -18.4   circling
+18.4 -21.4   exchange: two counters and a fast 1-2
+21.4 -23.4   reload, both settle
+23.4 -25.6   both throw a cross at the same instant - clash
+25.6 -27.8   final exchange, both land a rising blow
+27.8 -30.0   both step back, breathe, fade out
 """
 from __future__ import annotations
 
 import math
 
-from .core import clamp
-from .motion import HIP, Performer, Scalar
+from . import poses as PS
+from .core import Pose, clamp, solve
+from .poses import fade, mirror, to_pose
 
 GROUND = 432.0
 FPS = 24
@@ -26,26 +34,76 @@ DURATION = 30.0
 RED = (186, 54, 50)
 BLUE = (38, 84, 148)
 
-# hand targets are (forward, up) in the fighter's own facing space, measured from
-# the shoulder; the arm can reach 101 units, so anything past ~95 is a full commit
-# A boxer's guard: lead hand out in front of the face, rear hand at the chin.
-# Hands sit 45-60 units from the shoulder so the arms fold like arms, not springs.
-GUARD = dict(ha=(52, -22), hb=(30, 12))
-GUARD_HIGH = dict(ha=(56, -32), hb=(32, 4))
-GUARD_TIGHT = dict(ha=(42, -12), hb=(26, 16))
-RELAXED = dict(ha=(34, 4), hb=(16, 20))
+EASE = {
+    "smooth": lambda u: u * u * (3 - 2 * u),
+    "out": lambda u: 1 - (1 - u) ** 3,
+    "snap": lambda u: 1 - (1 - u) ** 5,
+    "in": lambda u: u ** 3,
+    "linear": lambda u: u,
+    "hold": lambda u: 0.0,
+}
+
+
+class Track:
+    """Poses + root x over time, sampled with per-segment easing."""
+
+    def __init__(self, name: str, facing: int):
+        self.name = name
+        self.facing = facing
+        self.keys: list[tuple[float, dict, str, float]] = []   # t, pose, ease, root_x
+
+    def key(self, t: float, pose: dict, root_x: float, ease: str = "smooth") -> "Track":
+        self.keys = [k for k in self.keys if abs(k[0] - t) > 1e-6]
+        self.keys.append((float(t), dict(pose), ease, float(root_x)))
+        self.keys.sort(key=lambda k: k[0])
+        return self
+
+    def _pair(self, t: float):
+        ks = self.keys
+        if t <= ks[0][0]:
+            return ks[0], ks[0], 0.0
+        if t >= ks[-1][0]:
+            return ks[-1], ks[-1], 0.0
+        for i in range(len(ks) - 1):
+            if ks[i][0] <= t <= ks[i + 1][0]:
+                a, b = ks[i], ks[i + 1]
+                u = (t - a[0]) / max(b[0] - a[0], 1e-9)
+                return a, b, EASE.get(b[2], EASE["smooth"])(u)
+        return ks[-1], ks[-1], 0.0
+
+    def sample(self, t: float):
+        a, b, u = self._pair(t)
+        pose = {k: a[1][k] + (b[1][k] - a[1][k]) * u if isinstance(a[1][k], (int, float))
+                else (a[1][k][0] + (b[1][k][0] - a[1][k][0]) * u,
+                      a[1][k][1] + (b[1][k][1] - a[1][k][1]) * u)
+                for k in a[1]}
+        root = a[3] + (b[3] - a[3]) * u
+        return pose, root
+
+    def pose_at(self, t: float) -> Pose:
+        p, root = self.sample(t)
+        return to_pose(p, root, GROUND, facing=self.facing)
+
+    def head_at(self, t: float, root: float | None = None):
+        p, r = self.sample(t)
+        sk = solve(to_pose(p, r if root is None else root, GROUND, facing=self.facing))
+        return sk.head
+
+    def hand_at(self, t: float, near: bool = True):
+        p, r = self.sample(t)
+        sk = solve(to_pose(p, r, GROUND, facing=self.facing))
+        return sk.pts[6] if near else sk.pts[4]
 
 
 def build() -> dict:
-    a = Performer(372.0, GROUND, facing=1)
-    b = Performer(596.0, GROUND, facing=-1)
-
+    a = Track("red", facing=1)
+    b = Track("blue", facing=-1)
     events: list[dict] = []
 
-    def spark(t, size=1.0, kind="spark"):
-        events.append({"t": t, "kind": kind, "size": size})
+    def spark(t, size=1.0, kind="spark", anchor=None):
+        events.append({"t": t, "kind": kind, "size": size, "anchor": anchor})
 
-    def whoosh(t, dur=0.16, size=1.0, direction=1, y=-10):
+    def whoosh(t, dur=0.16, size=1.0, direction=1, y=0.0):
         events.append({"t": t, "kind": "whoosh", "dur": dur, "size": size,
                        "dir": direction, "y": y})
 
@@ -58,312 +116,325 @@ def build() -> dict:
     def flash(t, size=1.0):
         events.append({"t": t, "kind": "flash", "size": size})
 
-    # strikes are recorded now and aimed at the defender's head afterwards
-    aims: list[dict] = []
+    G = PS.GUARD
+    X_A, X_B = 374.0, 548.0        # starting roots (~164 apart)
 
-    def strike(t, att: Performer, dfd: Performer, *, hand="b", size=0.8, off=(0, 0),
-               ease="snap", recover=0.20, guard=None):
-        """Throw a hand at the defender's head at time ``t`` and snap it back."""
-        aims.append(dict(t=t, att=att, dfd=dfd, hand=hand, off=off, ease=ease,
-                         recover=recover, guard=guard))
-        return t
+    # ---------------------------------------------------------------- opening
+    a.key(0.0, PS.IDLE, X_A)
+    b.key(0.0, PS.IDLE, X_B)
+    a.key(1.0, fade(G, torso=-82), X_A + 2)
+    b.key(1.15, fade(G, torso=-82), X_B - 2)
+    a.key(2.0, G, X_A + 6)
+    b.key(2.05, G, X_B - 6)
 
-    # ================================================================ opening
-    # both breathe and shift weight; the camera pushes in
-    a.key_pose(0.0, root=372, lean=-0.05, crouch=3, **GUARD)
-    b.key_pose(0.0, root=596, lean=-0.05, crouch=3, **GUARD)
-    a.key_pose(1.1, lean=-0.02, crouch=2, **GUARD_HIGH)
-    b.key_pose(1.3, lean=-0.02, crouch=2, **GUARD_HIGH)
-    a.key_pose(2.1, root=384, lean=-0.06, crouch=4, **GUARD)
-    b.key_pose(2.1, root=588, crouch=2, **GUARD)
+    # ---------------------------------------------------------------- jab, blocked
+    a.key(2.45, PS.TIGHT, X_A + 14, "out")
+    b.key(2.45, PS.BLOCK_HI, X_B - 4, "out")
+    a.key(2.72, PS.JAB, X_A + 30, "snap")
+    b.key(2.72, PS.BLOCK_HI, X_B - 4, "smooth")
+    spark(2.72, 0.45)
+    whoosh(2.60, direction=1)
+    a.key(3.00, G, X_A + 22, "out")
+    b.key(3.05, G, X_B - 8)
 
-    # ================================================================ jab (parried)
-    a.key_pose(2.55, root=414, lean=-0.02, crouch=5, ha=(10, -10), hb=(6, 6), ease="out")
-    b.key_pose(2.55, root=586, **GUARD_HIGH)
-    whoosh(2.72, direction=1)
-    strike(2.86, a, b, hand="a", size=0.5, off=(6, -6))
-    b.key_pose(2.86, lean=-0.10, crouch=4, **GUARD_HIGH, ease="snap")
-    spark(2.86, 0.5)
-    a.key_pose(3.06, root=418, lean=0.02, crouch=4, **GUARD)
-    b.key_pose(3.10, root=590, **GUARD_HIGH)
+    # ---------------------------------------------------------------- cross, slips
+    a.key(3.40, fade(PS.TIGHT, torso=-76), X_A + 26, "out")
+    b.key(3.45, PS.SLIP, X_B + 4, "out")
+    a.key(3.72, PS.CROSS, X_A + 44, "snap")
+    whoosh(3.58, direction=1)
+    b.key(3.74, PS.SLIP, X_B + 8, "smooth")
+    a.key(4.05, G, X_A + 30, "out")
+    b.key(4.15, G, X_B)
 
-    # ================================================================ cross (slipped)
-    a.key_pose(3.55, root=440, lean=-0.10, crouch=6, ha=(6, -4), hb=(14, 4), ease="out")
-    whoosh(3.72, direction=1)
-    strike(3.86, a, b, hand="b", size=0.45, off=(0, -2))
-    b.key_pose(3.80, root=602, lean=-0.26, crouch=3, ha=(18, -16), hb=(4, 2), ease="snap")
-    b.key_pose(4.20, root=598, lean=-0.10, crouch=4, **GUARD)
-    a.key_pose(4.30, root=428, lean=0.04, crouch=3, **GUARD)
+    # ---------------------------------------------------------------- body kick blocked
+    b.key(4.60, fade(PS.TIGHT, torso=-74), X_B - 6, "out")
+    b.key(4.95, PS.KICK_MID, X_B - 44, "snap")
+    whoosh(4.80, direction=-1, dur=0.2)
+    a.key(4.92, PS.BLOCK_MID, X_A + 34, "snap")
+    spark(4.98, 0.8)
+    shake(4.98, 0.7, 0.22, kick=0.03)
+    b.key(5.35, G, X_B - 4, "out")
+    a.key(5.40, G, X_A + 28)
 
-    # ================================================================ B body kick
-    b.key_pose(4.75, root=570, lean=-0.22, crouch=1, ha=(4, -4), hb=(-16, 10), ease="out")
-    whoosh(4.95, direction=-1, dur=0.2, y=26)
-    b.feet.kick(4.95, 5.42, 0, (a.head_at(5.16)[0] - 30, GROUND - 74.0), arc=18)
-    a.key_pose(5.02, root=436, lean=0.16, crouch=8, ha=(20, 2), hb=(6, 16), ease="snap")
-    spark(5.16, 0.85)
-    shake(5.16, 0.8, 0.24, kick=0.03)
-    b.key_pose(5.42, root=576, lean=-0.06, crouch=3, **GUARD)
-    a.key_pose(5.55, root=430, lean=0.04, crouch=4, **GUARD)
+    # ---------------------------------------------------------------- two jabs
+    a.key(5.85, PS.TIGHT, X_A + 30, "out")
+    a.key(6.10, PS.JAB, X_A + 40, "snap")
+    b.key(6.10, PS.BLOCK_HI, X_B - 2, "snap")
+    whoosh(6.00, direction=1)
+    spark(6.10, 0.35)
+    a.key(6.32, PS.TIGHT, X_A + 32, "out")
+    a.key(6.55, PS.CROSS, X_A + 44, "snap")
+    b.key(6.55, PS.BLOCK_HI, X_B - 2, "snap")
+    spark(6.55, 0.45)
+    a.key(6.85, G, X_A + 30, "out")
+    b.key(6.90, G, X_B)
 
-    # ================================================================ two jabs, both read
-    a.key_pose(5.95, root=452, lean=-0.04, crouch=4, **GUARD)
-    b.key_pose(5.95, root=582, **GUARD_HIGH)
-    whoosh(6.06, direction=1)
-    strike(6.18, a, b, hand="a", size=0.35, off=(4, -6))
-    b.key_pose(6.18, lean=-0.08, **GUARD_HIGH, ease="snap")
-    spark(6.18, 0.35)
-    a.key_pose(6.34, root=456, **GUARD)
-    whoosh(6.46, direction=1)
-    strike(6.58, a, b, hand="b", size=0.45, off=(2, -4))
-    b.key_pose(6.58, lean=-0.12, **GUARD_TIGHT, ease="snap")
-    spark(6.58, 0.45)
-    a.key_pose(6.78, root=450, **GUARD)
-    b.key_pose(6.86, root=578, **GUARD)
+    # ---------------------------------------------------------------- hook slips, uppercut lands
+    b.key(7.25, fade(PS.TIGHT, torso=-76), X_B - 8, "out")
+    b.key(7.55, PS.HOOK, X_B - 22, "snap")
+    whoosh(7.42, direction=-1)
+    a.key(7.50, PS.DUCK, X_A + 34, "snap")
+    b.key(7.90, PS.TIGHT, X_B - 10, "out")
+    a.key(8.05, fade(PS.TIGHT, torso=-76), X_A + 40, "out")
+    a.key(8.35, PS.UPPERCUT, X_A + 50, "snap")
+    whoosh(8.22, direction=1)
+    b.key(8.36, PS.HIT_HEAD, X_B + 6, "snap")
+    spark(8.36, 1.0)
+    shake(8.36, 1.1, 0.3, kick=0.05)
+    a.key(8.70, G, X_A + 40, "out")
+    b.key(8.85, fade(G, torso=-84), X_B + 2)
 
-    # ================================================================ B steps in, hook + duck
-    b.key_pose(7.30, root=556, lean=0.06, crouch=4, ha=(24, -2), hb=(12, 8), ease="out")
-    whoosh(7.46, direction=-1)
-    strike(7.58, b, a, hand="b", size=0.5, off=(0, -6))
-    a.key_pose(7.56, root=444, crouch=15, lean=0.26, ha=(16, 6), hb=(4, 16), ease="snap")
-    spark(7.58, 0.4)
-    b.key_pose(7.84, root=552, lean=0.10, crouch=4, **GUARD_HIGH)
-    a.key_pose(7.96, root=446, crouch=3, lean=-0.04, **GUARD)
+    # ---------------------------------------------------------------- clinch, shove
+    a.key(9.30, PS.CLINCH, X_A + 58, "out")
+    b.key(9.30, PS.CLINCH, X_B - 10, "out")
+    a.key(9.80, fade(PS.CLINCH, torso=-68), X_A + 66)
+    b.key(9.80, fade(PS.CLINCH, torso=-68), X_B - 16)
+    a.key(10.30, PS.SHOVE, X_A + 50, "out")
+    b.key(10.30, PS.SHOVE, X_B - 6, "out")
+    shake(10.30, 0.4, 0.25)
+    a.key(10.80, G, X_A + 34, "out")
+    b.key(10.85, G, X_B - 2, "out")
 
-    # ================================================================ A uppercut lands
-    a.key_pose(8.22, root=470, lean=0.10, crouch=8, ha=(10, 14), hb=(6, 12), ease="out")
-    whoosh(8.34, direction=1)
-    strike(8.46, a, b, hand="b", size=1.0, off=(-2, 10), guard=None)
-    b.key_pose(8.50, root=566, lean=-0.30, crouch=1, ha=(10, -18), hb=(-6, -6), ease="snap")
-    spark(8.46, 1.0)
-    shake(8.46, 1.2, 0.3, kick=0.05)
-    a.key_pose(8.74, root=478, lean=-0.06, crouch=4, **GUARD)
-    b.key_pose(8.95, root=570, lean=-0.10, crouch=4, **GUARD_HIGH)
+    # ---------------------------------------------------------------- knee, hook
+    a.key(11.25, fade(PS.CLINCH, torso=-76), X_A + 52, "out")
+    b.key(11.25, PS.TIGHT, X_B - 8, "out")
+    a.key(11.55, PS.KNEE, X_A + 58, "snap")
+    whoosh(11.42, direction=1, dur=0.14)
+    spark(11.55, 0.7)
+    shake(11.55, 0.6, 0.2, kick=0.03)
+    b.key(11.55, PS.HIT_BODY, X_B + 2, "snap")
+    a.key(11.90, G, X_A + 48, "out")
+    b.key(12.00, PS.TIGHT, X_B - 4)
+    a.key(12.35, PS.HOOK, X_A + 58, "snap")
+    b.key(12.35, PS.BLOCK_HI, X_B - 2, "snap")
+    whoosh(12.24, direction=1)
+    spark(12.35, 0.9)
+    shake(12.35, 0.8, 0.25, kick=0.04)
+    a.key(12.70, G, X_A + 46, "out")
+    b.key(12.80, G, X_B - 6)
 
-    # ================================================================ clinch, shove
-    a.key_pose(9.40, root=494, lean=0.08, crouch=5, ha=(34, -6), hb=(26, 4), ease="out")
-    b.key_pose(9.40, root=546, lean=0.10, crouch=5, ha=(34, -6), hb=(26, 4), ease="out")
-    a.key_pose(9.95, root=500, lean=0.14, crouch=7, ha=(38, -2), hb=(30, 8))
-    b.key_pose(9.95, root=542, lean=0.14, crouch=7, ha=(38, -2), hb=(30, 8))
-    a.key_pose(10.45, root=478, lean=-0.14, crouch=2, ha=(20, -12), hb=(10, 0), ease="out")
-    b.key_pose(10.45, root=560, lean=-0.14, crouch=2, ha=(20, -12), hb=(10, 0), ease="out")
-    f = 10.42
-    events.append({"t": f, "kind": "spark", "size": 0.3})
-    shake(10.42, 0.4, 0.28)
-    a.key_pose(11.0, root=470, lean=-0.04, crouch=3, **GUARD)
-    b.key_pose(11.0, root=566, lean=-0.04, crouch=3, **GUARD)
+    # ---------------------------------------------------------------- sweep jumped, head kick, counter
+    b.key(13.20, fade(PS.TIGHT, torso=-74), X_B - 10, "out")
+    b.key(13.55, PS.KICK_LOW, X_B - 40, "snap")
+    whoosh(13.44, direction=-1, dur=0.18, y=30)
+    a.key(13.45, PS.AIRBORNE, X_A + 40, "snap")
+    a.key(13.90, PS.AIRBORNE, X_A + 44, "smooth")
+    dust(14.02, 0.5)
+    a.key(14.10, PS.LANDED, X_A + 46, "snap")
+    b.key(14.05, G, X_B - 6, "out")
+    a.key(14.45, G, X_A + 42, "out")
 
-    # ================================================================ knee, backfist
-    a.key_pose(11.45, root=488, lean=0.16, crouch=1, ha=(24, 4), hb=(16, 10), ease="out")
-    b.key_pose(11.45, root=548, lean=-0.10, crouch=5, **GUARD_TIGHT)
-    a.feet.kick(11.55, 11.95, 1, (b.head_at(11.7)[0] - 52, GROUND - 62.0), arc=14)
-    whoosh(11.6, direction=1, dur=0.14, y=30)
-    spark(11.74, 0.75)
-    shake(11.74, 0.7, 0.2, kick=0.03)
-    b.key_pose(11.74, crouch=9, lean=0.24, ease="snap")
-    a.key_pose(12.0, root=492, lean=0.02, crouch=4, **GUARD)
-    b.key_pose(12.05, root=552, lean=-0.02, crouch=5, **GUARD_HIGH)
-
-    # spin-ish backfist: the hand starts behind the head, then whips across
-    a.key_pose(12.35, root=496, lean=-0.16, crouch=5, ha=(-6, -18), hb=(20, -10), ease="out")
-    whoosh(12.5, direction=1, dur=0.14)
-    strike(12.62, a, b, hand="b", size=1.0, off=(0, -4))
-    b.key_pose(12.62, root=560, lean=-0.22, crouch=4, ha=(16, -14), hb=(4, 0), ease="snap")
-    spark(12.62, 1.0)
-    shake(12.62, 1.1, 0.3, kick=0.05)
-    a.key_pose(12.92, root=486, lean=-0.02, crouch=4, **GUARD)
-    b.key_pose(13.1, root=566, lean=-0.06, crouch=4, **GUARD_HIGH)
-
-    # ================================================================ sweep, jumped
-    b.key_pose(13.45, root=556, lean=0.18, crouch=8, ha=(10, 2), hb=(0, 12), ease="out")
-    whoosh(13.6, direction=-1, dur=0.2, y=44)
-    b.feet.kick(13.62, 14.05, 0, (a.root.at(13.8) + 24, GROUND - 46.0), arc=10)
-    a.feet.jump(13.66, 14.12, 26.0)
-    a.key_pose(13.66, root=482, lean=-0.10, crouch=-8, ha=(14, -10), hb=(2, 2), ease="snap")
-    a.key_pose(13.95, root=486, lean=-0.04, crouch=-4, ha=(16, -6), hb=(4, 4))
-    dust(14.12, 0.6)
-    a.key_pose(14.16, root=488, lean=0.10, crouch=12, ha=(18, 4), hb=(6, 14), ease="snap")
-    b.key_pose(14.1, root=558, lean=-0.04, crouch=4, **GUARD)
-    a.key_pose(14.5, root=492, lean=-0.02, crouch=4, **GUARD)
-
-    # ================================================================ B head kick, A counter
-    b.key_pose(14.85, root=550, lean=-0.16, crouch=2, ha=(6, -8), hb=(-14, 12), ease="out")
-    whoosh(14.98, direction=-1, dur=0.2, y=-40)
-    b.feet.kick(15.0, 15.4, 0, (a.head_at(15.2)[0] - 56, GROUND - 116.0), arc=26)
-    a.key_pose(15.05, root=474, lean=-0.30, crouch=3, ha=(18, -18), hb=(6, -4), ease="snap")
-    b.key_pose(15.4, root=548, lean=-0.06, crouch=4, **GUARD)
-    # counter straight while B is still on one leg
-    a.key_pose(15.62, root=506, lean=0.14, crouch=5, ha=(10, -6), hb=(16, 2), ease="out")
-    whoosh(15.7, direction=1)
-    strike(15.82, a, b, hand="b", size=1.1, off=(0, -6))
-    b.key_pose(15.82, root=562, lean=-0.34, crouch=2, ha=(12, -16), hb=(-4, -4), ease="snap")
+    b.key(14.80, fade(PS.TIGHT, torso=-74), X_B - 8, "out")
+    b.key(15.15, PS.KICK_HI, X_B - 52, "snap")
+    whoosh(15.02, direction=-1, dur=0.2, y=-40)
+    a.key(15.10, PS.SLIP, X_A + 34, "snap")
+    b.key(15.55, PS.ONE_LEG, X_B - 6, "out")
+    a.key(15.50, fade(PS.TIGHT, torso=-74), X_A + 52, "out")
+    a.key(15.82, PS.CROSS, X_A + 64, "snap")
+    whoosh(15.70, direction=1)
+    b.key(15.82, PS.HIT_HEAD, X_B + 10, "snap")
     spark(15.82, 1.1)
-    shake(15.82, 1.3, 0.32, kick=0.06)
-    a.key_pose(16.1, root=500, lean=-0.02, crouch=4, **GUARD)
-    b.key_pose(16.35, root=572, lean=-0.08, crouch=4, **GUARD_HIGH)
+    shake(15.82, 1.2, 0.3, kick=0.05)
+    a.key(16.15, G, X_A + 54, "out")
+    b.key(16.35, fade(G, torso=-84), X_B + 4)
 
-    # ================================================================ circling
-    a.key_pose(17.0, root=488, lean=-0.04, crouch=4, **GUARD)
-    b.key_pose(17.0, root=576, lean=-0.04, crouch=4, **GUARD)
-    a.key_pose(18.0, root=496, lean=-0.02, crouch=3, **GUARD_HIGH)
-    b.key_pose(18.0, root=570, lean=-0.02, crouch=3, **GUARD_HIGH)
+    # ---------------------------------------------------------------- circling
+    a.key(17.10, G, X_A + 50)
+    b.key(17.10, G, X_B)
+    a.key(18.05, fade(G, torso=-82), X_A + 54)
+    b.key(18.05, fade(G, torso=-82), X_B - 6)
 
-    # ================================================================ exchange
-    b.key_pose(18.4, root=560, lean=0.06, ha=(18, -2), hb=(12, 8), ease="out")
-    whoosh(18.5, direction=-1)
-    strike(18.62, b, a, hand="b", size=0.5, off=(0, -6))
-    a.key_pose(18.6, root=486, lean=-0.12, crouch=5, **GUARD_HIGH, ease="snap")
-    spark(18.62, 0.5)
-    b.key_pose(18.86, root=562, **GUARD)
-    a.key_pose(19.06, root=512, lean=0.12, crouch=5, ha=(8, -4), hb=(16, 2), ease="out")
-    whoosh(19.16, direction=1)
-    strike(19.28, a, b, hand="b", size=0.6, off=(0, -4))
-    b.key_pose(19.26, root=574, lean=-0.20, crouch=3, **GUARD_HIGH, ease="snap")
-    spark(19.28, 0.6)
-    a.key_pose(19.55, root=506, **GUARD)
-    b.key_pose(19.6, root=576, **GUARD)
+    # ---------------------------------------------------------------- exchange
+    b.key(18.45, PS.JAB, X_B - 18, "snap")
+    whoosh(18.34, direction=-1)
+    a.key(18.45, PS.BLOCK_HI, X_A + 58, "snap")
+    spark(18.45, 0.5)
+    b.key(18.80, G, X_B - 8, "out")
+    a.key(18.95, PS.JAB, X_A + 62, "snap")
+    whoosh(18.86, direction=1)
+    b.key(18.95, PS.BLOCK_HI, X_B - 4, "snap")
+    spark(18.95, 0.5)
+    a.key(19.30, G, X_A + 56, "out")
+    b.key(19.35, G, X_B - 6)
+    a.key(19.75, PS.TIGHT, X_A + 58, "out")
+    b.key(19.75, PS.TIGHT, X_B - 8, "out")
+    a.key(20.05, PS.JAB, X_A + 64, "snap")
+    b.key(20.05, PS.BLOCK_MID, X_B - 6, "snap")
+    spark(20.05, 0.4)
+    a.key(20.35, PS.TIGHT, X_A + 58, "out")
+    a.key(20.62, PS.CROSS, X_A + 66, "snap")
+    b.key(20.62, PS.BLOCK_HI, X_B - 6, "snap")
+    spark(20.62, 0.55)
+    a.key(20.95, G, X_A + 56, "out")
+    b.key(21.00, G, X_B - 10)
 
-    # ================================================================ quick 1-2
-    a.key_pose(20.15, root=524, lean=0.02, crouch=4, **GUARD)
-    b.key_pose(20.15, root=566, **GUARD_HIGH)
-    whoosh(20.24, direction=1)
-    strike(20.34, a, b, hand="a", size=0.4, off=(4, -6))
-    b.key_pose(20.34, lean=-0.08, **GUARD_HIGH, ease="snap")
-    spark(20.34, 0.4)
-    a.key_pose(20.52, root=526, **GUARD)
-    whoosh(20.6, direction=1)
-    strike(20.72, a, b, hand="b", size=0.55, off=(2, -2))
-    b.key_pose(20.72, lean=-0.14, **GUARD_TIGHT, ease="snap")
-    spark(20.72, 0.55)
-    a.key_pose(20.95, root=516, **GUARD)
+    # ---------------------------------------------------------------- reload
+    a.key(21.65, fade(G, torso=-78), X_A + 52)
+    b.key(21.65, fade(G, torso=-78), X_B - 12)
+    a.key(22.45, fade(G, torso=-80, crouch=10), X_A + 54)
+    b.key(22.45, fade(G, torso=-80, crouch=10), X_B - 14)
+    a.key(23.05, G, X_A + 62)
+    b.key(23.05, G, X_B - 24)
 
-    # ================================================================ reload
-    a.key_pose(21.6, root=506, lean=-0.06, crouch=4, **GUARD)
-    b.key_pose(21.6, root=574, lean=-0.06, crouch=4, **GUARD)
-    a.key_pose(22.4, root=500, lean=-0.10, crouch=6, ha=(10, -14), hb=(2, -2))
-    b.key_pose(22.4, root=578, lean=-0.10, crouch=6, ha=(10, -14), hb=(2, -2))
-    a.key_pose(23.05, root=512, lean=0.06, crouch=3, **GUARD)
-    b.key_pose(23.05, root=566, lean=0.06, crouch=3, **GUARD)
+    # ---------------------------------------------------------------- clash
+    a.key(23.45, PS.TIGHT, X_A + 66, "out")
+    b.key(23.45, PS.TIGHT, X_B - 28, "out")
+    a.key(23.78, PS.CROSS, X_A + 78, "snap")
+    b.key(23.78, PS.CROSS, X_B - 40, "snap")
+    whoosh(23.66, direction=1)
+    whoosh(23.66, direction=-1)
+    spark(23.78, 1.0, anchor="fists")
+    flash(23.78, 0.55)
+    shake(23.78, 1.6, 0.4, kick=0.06)
+    a.key(24.20, PS.HIT_HEAD, X_A + 58, "out")
+    b.key(24.20, PS.HIT_HEAD, X_B - 18, "out")
+    a.key(24.75, G, X_A + 52, "out")
+    b.key(24.75, G, X_B - 10, "out")
 
-    # ================================================================ clash
-    a.key_pose(23.5, root=534, lean=0.16, crouch=4, ha=(12, -6), hb=(14, 0), ease="out")
-    b.key_pose(23.5, root=548, lean=0.16, crouch=4, ha=(12, -6), hb=(14, 0), ease="out")
-    whoosh(23.62, direction=1)
-    whoosh(23.64, direction=-1)
-    strike(23.76, a, b, hand="a", size=1.5, off=(-2, -24))
-    strike(23.82, b, a, hand="b", size=1.5, off=(2, 4))
-    spark(23.78, 1.0)
-    flash(23.78, 0.6)
-    shake(23.78, 2.0, 0.42, kick=0.07)
-    a.key_pose(24.12, root=492, lean=-0.24, crouch=3, ha=(14, -14), hb=(2, -2), ease="snap")
-    b.key_pose(24.12, root=590, lean=-0.24, crouch=3, ha=(14, -14), hb=(2, -2), ease="snap")
-    a.key_pose(24.7, root=498, lean=-0.04, crouch=4, **GUARD)
-    b.key_pose(24.7, root=584, lean=-0.04, crouch=4, **GUARD)
+    # ---------------------------------------------------------------- final exchange
+    a.key(25.45, PS.TIGHT, X_A + 54, "out")
+    b.key(25.45, PS.TIGHT, X_B - 12, "out")
+    a.key(25.95, PS.JAB, X_A + 62, "snap")
+    b.key(25.95, PS.BLOCK_HI, X_B - 8, "snap")
+    spark(25.95, 0.5)
+    b.key(26.25, PS.JAB, X_B - 20, "snap")
+    a.key(26.25, PS.BLOCK_HI, X_A + 54, "snap")
+    spark(26.25, 0.5)
+    a.key(26.70, fade(PS.TIGHT, torso=-78), X_A + 58, "out")
+    b.key(26.70, fade(PS.TIGHT, torso=-78), X_B - 14, "out")
+    a.key(27.05, PS.UPPERCUT, X_A + 68, "snap")
+    b.key(27.05, PS.UPPERCUT, X_B - 24, "snap")
+    spark(27.05, 1.0, anchor="fists")
+    flash(27.05, 0.5)
+    shake(27.05, 1.7, 0.42, kick=0.06)
+    a.key(27.45, PS.HIT_HEAD, X_A + 54, "out")
+    b.key(27.45, PS.HIT_HEAD, X_B - 14, "out")
 
-    # ================================================================ final exchange
-    a.key_pose(25.5, root=508, lean=-0.02, crouch=4, **GUARD)
-    b.key_pose(25.5, root=576, lean=-0.02, crouch=4, **GUARD)
-    a.key_pose(26.1, root=524, lean=0.10, crouch=3, ha=(14, -8), hb=(12, 0), ease="out")
-    b.key_pose(26.1, root=562, lean=0.10, crouch=3, ha=(14, -8), hb=(12, 0), ease="out")
-    a.key_pose(26.9, root=536, lean=0.14, crouch=4, ha=(10, -4), hb=(16, 4), ease="out")
-    b.key_pose(26.9, root=552, lean=0.14, crouch=4, ha=(10, -4), hb=(16, 4), ease="out")
-    whoosh(27.0, direction=1)
-    whoosh(27.02, direction=-1)
-    strike(27.14, a, b, hand="a", size=1.6, off=(-2, -22))
-    strike(27.20, b, a, hand="b", size=1.6, off=(2, 6))
-    spark(27.16, 1.1)
-    flash(27.16, 0.7)
-    shake(27.16, 2.3, 0.45, kick=0.08)
-    a.key_pose(27.55, root=504, lean=-0.20, crouch=4, ha=(10, -12), hb=(0, 0), ease="snap")
-    b.key_pose(27.55, root=584, lean=-0.20, crouch=4, ha=(10, -12), hb=(0, 0), ease="snap")
+    # ---------------------------------------------------------------- settle, fade
+    a.key(28.30, fade(PS.GUARD, torso=-82), X_A + 40, "out")
+    b.key(28.30, fade(PS.GUARD, torso=-82), X_B - 4, "out")
+    a.key(29.20, PS.TIRED, X_A + 34, "smooth")
+    b.key(29.20, PS.TIRED, X_B, "smooth")
+    a.key(30.0, fade(PS.TIRED, torso=-66), X_A + 32)
+    b.key(30.0, fade(PS.TIRED, torso=-66), X_B + 2)
 
-    # last beat: both drop into a low guard, breathing, and the film fades
-    a.key_pose(28.4, root=500, lean=0.04, crouch=8, ha=(22, 0), hb=(10, 10))
-    b.key_pose(28.4, root=582, lean=0.04, crouch=8, ha=(22, 0), hb=(10, 10))
-    a.key_pose(29.4, root=498, lean=0.02, crouch=6, ha=(20, 2), hb=(8, 12))
-    b.key_pose(29.4, root=580, lean=0.02, crouch=6, ha=(20, 2), hb=(8, 12))
+    # ---------------------------------------------------------------- foot locking
+    # A pose's feet are offsets from the hip, so a moving root drags them along.
+    # Walk the keys; whenever a foot stays planted across a key, shift the later
+    # root so that foot lands in the same world spot (a step, not a slide).
+    def lock(track: Track):
+        for i in range(1, len(track.keys)):
+            t0, p0, _e0, x0 = track.keys[i - 1]
+            t1, p1, e1, x1 = track.keys[i]
+            if p0["foot_l"][1] <= 0.5 and p1["foot_l"][1] <= 0.5:
+                want = x0 + p0["foot_l"][0] * track.facing
+                x1 = want - p1["foot_l"][0] * track.facing
+            elif p0["foot_r"][1] <= 0.5 and p1["foot_r"][1] <= 0.5:
+                want = x0 + p0["foot_r"][0] * track.facing
+                x1 = want - p1["foot_r"][0] * track.facing
+            track.keys[i] = (t1, p1, e1, x1)
+    # travel is ~0.3 px/frame here, so a full lock would only cancel the staging;
+    # a light lock keeps the feet from skating without freezing the advance.
+    K = 0.25
 
-    # ================================================================ resolve aims
-    for s in aims:
-        att, dfd = s["att"], s["dfd"]
-        hx, hy = dfd.head_at(s["t"])
-        sx, sy = att.shoulder_at(s["t"])
-        off = s["off"]
-        dx = (hx + off[0] - sx) * att.facing
-        dy = (hy + off[1] - sy)
-        # the arm cannot reach past ~99; clamp and let the body keep the rest
-        r = math.hypot(dx, dy)
-        if r > 99.0:
-            dx *= 99.0 / r
-            dy *= 99.0 / r
-        trk = att.hand_a if s["hand"] == "a" else att.hand_b
-        trk.key(s["t"], (dx, dy), s["ease"])
-        # snap back to whatever guard the author asked for (or the default)
-        back = s["guard"] or (GUARD["ha"] if s["hand"] == "a" else GUARD["hb"])
-        trk.key(s["t"] + s["recover"], back, "out")
+    def lock_blend(track: Track):
+        base = [k[3] for k in track.keys]
+        lock(track)
+        for i, (t, p, e, x) in enumerate(track.keys):
+            track.keys[i] = (t, p, e, base[i] + (x - base[i]) * K)
+    lock_blend(a)
+    lock_blend(b)
 
-    # ================================================================ keep the distance
-    # Two figures with 100-unit arms need ~150 units between their heads or the
-    # bodies interpenetrate. The author works in beats, not in numbers, so the
-    # pair is separated afterwards: the midpoint of every authored approach is
-    # kept and the gap is opened to the minimum — baked at 1/20 s so the spline
-    # cannot dip back through it between keys.
-    MIN_GAP = 150.0
-    ts = [i / 20.0 for i in range(int(DURATION * 20) + 1)]
-    xs = [(a.root.at(t), b.root.at(t)) for t in ts]
-    for _ in range(3):
-        for i, t in enumerate(ts):
-            xa, xb = xs[i]
-            # heads, not roots: a lean moves the head 30 units
-            ha = a.head_at(t, xa)
-            hb = b.head_at(t, xb)
-            if hb[0] - ha[0] < MIN_GAP:
-                push = (MIN_GAP - (hb[0] - ha[0])) * 0.5
-                xs[i] = (xa - push, xb + push)
-    a.root = Scalar(xs[0][0])
-    b.root = Scalar(xs[0][1])
-    for t, (xa, xb) in zip(ts, xs):
-        a.root.key(t, xa, "smooth")
-        b.root.key(t, xb, "smooth")
+    # how close the two heads may get, over time: almost touching in the clinch,
+    # a fist-plus-forearm apart everywhere else
+    gap_keys = [(0.0, 176.0), (4.6, 172.0), (4.95, 152.0), (5.4, 172.0),
+                (9.0, 172.0), (9.5, 138.0), (10.5, 138.0), (11.1, 168.0),
+                (13.25, 168.0), (13.55, 152.0), (14.2, 172.0),
+                (14.9, 168.0), (15.15, 146.0), (15.5, 162.0), (16.2, 174.0),
+                (23.6, 170.0), (24.2, 174.0), (28.2, 178.0), (30.0, 182.0)]
 
-    # ================================================================ simulate feet
-    a.feet.simulate(a.root.at, 372.0, DURATION)
-    b.feet.simulate(b.root.at, 596.0, DURATION)
+    def gap_at(t):
+        if t <= gap_keys[0][0]:
+            return gap_keys[0][1]
+        for i in range(len(gap_keys) - 1):
+            t0, g0 = gap_keys[i]
+            t1, g1 = gap_keys[i + 1]
+            if t0 <= t <= t1:
+                u = (t - t0) / max(t1 - t0, 1e-9)
+                return g0 + (g1 - g0) * (u * u * (3 - 2 * u))
+        return gap_keys[-1][1]
 
-    # place the effect positions from the resolved bodies
+    # ---------------------------------------------------------------- separation
+    # Sample the whole timeline and relax the roots apart wherever the heads get
+    # closer than the beat allows, so the pair never collapses into one blob.
+    def relax(iters=4, step=0.08):
+        for _ in range(iters):
+            t = 0.0
+            while t <= 30.0:
+                g = b.head_at(t)[0] - a.head_at(t)[0]
+                want = gap_at(t)
+                if g < want - 0.5:
+                    push = (want - g) * 0.5
+                    for tr, sgn in ((a, -1.0), (b, 1.0)):
+                        ks = tr.keys
+                        for i in range(len(ks) - 1):
+                            t0, p0, e0, x0 = ks[i]
+                            t1, p1, e1, x1 = ks[i + 1]
+                            if t0 <= t <= t1:
+                                u = (t - t0) / max(t1 - t0, 1e-9)
+                                w0, w1 = (1 - u) ** 2, u * u
+                                ks[i] = (t0, p0, e0, x0 + sgn * push * w0 * step * 4)
+                                ks[i + 1] = (t1, p1, e1, x1 + sgn * push * w1 * step * 4)
+                                break
+                t += 0.1
+    relax()
+
+    # ---------------------------------------------------------------- effect anchors
     for e in events:
         t = e["t"]
         pa, pb = a.pose_at(t), b.pose_at(t)
-        from .core import solve
         sa, sb = solve(pa), solve(pb)
-        if e["kind"] in ("spark", "flash"):
-            cands = [((sa.pts[i][0] - sb.head[0]) ** 2 + (sa.pts[i][1] - sb.head[1]) ** 2,
-                      sa.pts[i], sb.head) for i in (4, 6, 8, 10)]
-            cands += [((sb.pts[i][0] - sa.head[0]) ** 2 + (sb.pts[i][1] - sa.head[1]) ** 2,
-                       sb.pts[i], sa.head) for i in (4, 6, 8, 10)]
-            _d, fist, head = min(cands, key=lambda c: c[0])
-            k = 0.8
-            e["x"] = fist[0] + (head[0] - fist[0]) * k
-            e["y"] = fist[1] + (head[1] - fist[1]) * k
+        if e["kind"] in ("spark", "flash") and e.get("anchor") == "fists":
+            # two punches meeting in the air: the star sits between the fists
+            fa = min((sa.pts[4], sa.pts[6]), key=lambda p: abs(p[0] - sb.head[0]))
+            fb = min((sb.pts[4], sb.pts[6]), key=lambda p: abs(p[0] - sa.head[0]))
+            e["x"] = (fa[0] + fb[0]) * 0.5
+            e["y"] = (fa[1] + fb[1]) * 0.5
+        elif e["kind"] in ("spark", "flash"):
+            # anchor the impact where the nearest limb of one fighter meets the
+            # nearest body target of the other: head first, then the torso
+            def torso(sk):
+                hip, sh = sk.starts[1], sk.pts[1]
+                return ((hip[0] + sh[0]) * 0.5, (hip[1] + sh[1]) * 0.5)
+            cands = []
+            for own, other in ((sa, sb), (sb, sa)):
+                for i in (4, 6, 8, 10):
+                    for target in (other.head, torso(other)):
+                        d = math.hypot(target[0] - own.pts[i][0], target[1] - own.pts[i][1])
+                        cands.append((d, own.pts[i], target))
+            d, limb, target = min(cands, key=lambda c: c[0])
+            d = max(d, 1.0)
+            e["x"] = target[0] + (limb[0] - target[0]) / d * 16.0
+            e["y"] = target[1] + (limb[1] - target[1]) / d * 12.0
         elif e["kind"] == "whoosh":
-            e["x"] = (sa.head[0] + sb.head[0]) * 0.5 + e.get("dir", 1) * 14
-            e.setdefault("y", -10)
-            e["y"] = 300 + e["y"]
+            e["x"] = (sa.head[0] + sb.head[0]) * 0.5 + e.get("dir", 1) * 10
+            e["y"] = 300 + e.get("y", 0)
         elif e["kind"] == "dust":
             e["x"] = (a.head_at(t)[0] + b.head_at(t)[0]) * 0.5
             e["y"] = GROUND
 
     camera = [
-        # t,    cx,  cy, zoom
-        (0.0, 484, 286, 1.06),
-        (4.5, 500, 284, 1.18),
-        (8.0, 505, 286, 1.10),
-        (11.5, 512, 284, 1.22),
-        (14.0, 500, 280, 1.16),
-        (17.5, 494, 288, 1.08),
-        (20.5, 505, 284, 1.16),
-        (23.8, 512, 282, 1.24),
-        (26.0, 520, 284, 1.14),
-        (27.2, 522, 282, 1.28),
-        (30.0, 518, 286, 1.06),
+        (0.0, 452, 286, 1.24),
+        (4.6, 458, 284, 1.34),
+        (8.2, 462, 286, 1.28),
+        (11.4, 466, 284, 1.38),
+        (14.2, 460, 282, 1.32),
+        (17.6, 458, 286, 1.26),
+        (20.6, 464, 284, 1.36),
+        (23.7, 468, 282, 1.44),
+        (25.0, 464, 284, 1.34),
+        (27.1, 468, 282, 1.46),
+        (28.6, 462, 286, 1.30),
+        (30.0, 460, 288, 1.22),
     ]
     return {"a": a, "b": b, "events": events, "camera": camera}
