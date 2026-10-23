@@ -4,8 +4,10 @@ Cinematic, anime-inspired stick-figure films — written, scored, rendered and
 stored entirely in this repository.
 
 **Chapter 0 · "The Door"** — 30-second teaser (1920×1080, 24 fps, original score)
+**Chapter 1 · "The Boy Who Was Told No"** — 30-second preview
 
 * 🎬 `renders/eighth_gate_1080p.mp4`
+* 🎬 `renders/chapter1_preview_1080p.mp4`
 * 📜 Screenplay & 8-minute roadmap: [`docs/screenplay/the_eighth_gate.md`](docs/screenplay/the_eighth_gate.md)
 * 🛠 Engine: [`docs/PIPELINE.md`](docs/PIPELINE.md)
 

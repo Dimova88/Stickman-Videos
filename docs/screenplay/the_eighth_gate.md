@@ -42,14 +42,35 @@ and finds the one person he could never beat waiting on the other side.
 on the grid is the clash at 25.55 s. Everything before it drifts slightly late,
 so the hit *feels* like it lands.
 
-## Chapter 1 — The Boy Who Was Told No (0:30 – 2:00)
+## Chapter 1 — The Boy Who Was Told No (0:30 – 2:00) — *30 s preview built*
 
-* Cold open: a village at the foot of the mountain, rain on a shrine roof.
-* The master (orange, older, slower) teaches a strike in three movements. The
-  boy copies; the copy is wrong. Repeat *three* times, faster each time.
-* Beat: the master's hand stops an inch from the boy's throat, without touching
-  it. Held 1.5 s. Cut to black on the exhale.
-* Music: solo taiko + low strings. No choir yet.
+> Preview: `scenes/chapter1_preview.py` → `renders/chapter1_preview_1080p.mp4`
+
+| # | len | shot | sound |
+| --- | --- | --- | --- |
+| 1 | 4.2 s | The village at the foot of the mountain in rain — lit windows, stone lanterns, the yard below. | rain bed, low pad, distant bell |
+| 2 | 3.8 s | Wide: the boy alone in the shrine yard, staff circling, slow push-in. | three air-whooshes with the staff |
+| 3 | 2.0 s | Macro: feet pivoting on wet stone, water thrown, ring on the ground. | step, whoosh, cloth rustle |
+| 4 | 3.2 s | Medium close-up: rain on his face, eyes closed, then open. | breath, two heartbeats, chime, riser |
+| 5 | 3.4 s | The master steps out of a deep shadow, orange rim light. | reversed whoosh, taiko, braam, choir |
+| 6 | 4.4 s | **The lesson**: three slow beats — wind up, cut, follow through. | three wood hits on the beat |
+| 7 | 3.6 s | **Faster**: the same three strikes in 3.6 s with smears; the boy mirrors him. | tighter, louder wood hits + steps |
+| 8 | 3.6 s | His palm stops one inch from the boy's throat. **Time stops** — rain hangs, a ring of still air. | freeze sting, braam, held breath |
+| 9 | 1.8 s | Black. *Chapter One — The Boy Who Was Told No.* | final braam, choir tail |
+
+Design notes for the preview:
+
+* **Two colours, one rule:** the boy is blue-white, the master orange. Neither
+  ever wears the other's light until the last chapter.
+* **The palm stop is the whole chapter.** Nothing touches anything in this
+  scene — the gap *is* the lesson, which is why the freeze gets a ring of still
+  air instead of an impact.
+* **Rain is the metronome.** It is present in every shot and drops out for the
+  freeze, so the silence does the work.
+
+Remaining for the full chapter (per the 8-minute cut): the master's arrival on
+the mountain road, the boy's three failed copies, his fall, and the master
+walking away — roughly 60 s more material.
 
 ## Chapter 2 — Eight Gates (2:00 – 4:00) — *the training montage*
 

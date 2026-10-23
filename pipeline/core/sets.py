@@ -267,13 +267,26 @@ def stairs(p, t, y=250.0, depth=1.0, steps=9, w0=760.0, rise=34.0, run=64.0, col
 
 def temple_wall(p, t, pal: Palette, depth=0.92, y=250.0, windows=5, spacing=380.0, color=None,
                 glow=(1.0, 0.6, 0.25), lit_amount=0.0):
-    col = color or pal.near
-    p.polygon_world([(-3000, -800), (3000, -800), (3000, y), (-3000, y)], col, depth=depth)
+    col = np.asarray(color or pal.near, np.float32)
+    haze = np.asarray(pal.haze, np.float32)
+    # plaster catches a little ambient so the wall is not a void
+    p.polygon_world([(-3000, -900), (3000, -900), (3000, y), (-3000, y)], None, depth=depth,
+                    gradient=(tuple(col * 1.0 + haze * 0.16), tuple(col * 0.55)))
+    # eave / roof beam
+    p.polygon_world([(-3000, y - 470), (3000, y - 470), (3000, y - 420), (-3000, y - 420)],
+                    tuple(col * 1.9 + haze * 0.22), depth=depth)
+    p.polygon_world([(-3000, y - 540), (3000, y - 540), (3000, y - 470), (-3000, y - 470)],
+                    tuple(col * 1.2 + haze * 0.10), depth=depth)
+    # wooden posts
+    for i in range(-4, 5):
+        px = i * 740
+        p.polygon_world([(px - 26, y - 470), (px + 26, y - 470), (px + 26, y), (px - 26, y)],
+                        tuple(col * 1.6 + haze * 0.12), depth=depth)
     for i in range(windows):
         x = (i - (windows - 1) / 2) * spacing
         w, h = 96, 150
         p.polygon_world([(x - w / 2, y - 330), (x + w / 2, y - 330), (x + w / 2, y - 330 + h),
-                         (x - w / 2, y - 330 + h)], tuple(np.array(col) * 1.6), depth=depth)
+                         (x - w / 2, y - 330 + h)], tuple(col * 2.4 + haze * 0.25), depth=depth)
         if lit_amount > 0:
             flick = 0.8 + 0.2 * math.sin(t * 4.0 + i * 1.7)
             p.polygon_world([(x - w / 2 + 6, y - 324), (x + w / 2 - 6, y - 324),
@@ -339,3 +352,160 @@ def vignette_world(p, t, color=(0.0, 0.0, 0.0), alpha=0.5):
         for k in range(3):
             p.blob((side * (900 + k * 300), 620 - k * 120), 520 + k * 200, color, alpha=alpha * 0.22,
                    depth=2.0, soft=0.8)
+
+
+# ---------------------------------------------------------------- chapter one
+def village(p, t, pal: Palette, depth=0.5, y=260.0, seed=83, width=3400.0, rows=3,
+            lit=0.8, color=None, hazy=1.0):
+    """Layered rooflines at the foot of a mountain, lit windows, chimney smoke."""
+    base = np.asarray(color if color is not None else pal.near, np.float32)
+    r = np.random.default_rng(seed)
+    for row in range(rows):
+        d = depth + row * 0.06
+        shade = base * (0.55 + 0.45 * (row / max(rows - 1, 1))) * (1.0 - 0.18 * row)
+        yy = y - row * 62
+        x = -width / 2
+        i = 0
+        while x < width / 2:
+            w = r.uniform(90, 260)
+            h = r.uniform(52, 120)
+            # wall
+            p.polygon_world([(x, yy), (x + w, yy), (x + w, yy - h), (x, yy - h)],
+                            tuple(shade), depth=d)
+            # roof (two slopes)
+            over = r.uniform(10, 26)
+            peak = h + r.uniform(26, 54)
+            p.polygon_world([(x - over, yy - h), (x + w + over, yy - h), (x + w * 0.5, yy - peak)],
+                            tuple(shade * 1.5 + np.array([0.02, 0.015, 0.01])), depth=d)
+            p.line([(x - over, yy - h), (x + w * 0.5, yy - peak)], 1.2,
+                   tuple(np.asarray(pal.haze) * 0.9), alpha=0.35, depth=d)
+            p.line([(x + w * 0.5, yy - peak), (x + w + over, yy - h)], 1.2,
+                   tuple(np.asarray(pal.haze) * 0.9), alpha=0.30, depth=d)
+            # a warm window or two
+            if r.random() < lit:
+                for k in range(int(r.integers(1, 3))):
+                    wx = x + r.uniform(w * 0.15, w * 0.75)
+                    wy = yy - r.uniform(h * 0.35, h * 0.8)
+                    ww, wh = r.uniform(9, 18), r.uniform(10, 20)
+                    fl = 0.75 + 0.25 * math.sin(t * r.uniform(1.5, 5.0) + wx)
+                    p.polygon_world([(wx, wy), (wx + ww, wy), (wx + ww, wy - wh), (wx, wy - wh)],
+                                    (1.0, 0.72, 0.36), alpha=0.75 * fl, depth=d, additive=True)
+                    p.blob((wx + ww / 2, wy - wh / 2), 44, (1.0, 0.62, 0.28),
+                           alpha=0.16 * fl * hazy, depth=d, additive=True, soft=1.3)
+            # chimney smoke
+            if r.random() < 0.35:
+                cx = x + w * r.uniform(0.2, 0.8)
+                p.blob((cx + math.sin(t * 0.4 + cx) * 18, yy - peak - 40), 46,
+                       tuple(np.asarray(pal.haze) * 0.7), alpha=0.10, depth=d - 0.02, soft=1.2)
+            x += w + r.uniform(6, 34)
+            i += 1
+
+
+def frozen_rain(p, seed=91, count=340, alpha=0.5, color=(0.72, 0.82, 1.0), area=(-1500, 1500, -900, 900)):
+    """Hanging droplets for a time-stop beat."""
+    r = np.random.default_rng(seed)
+    for i in range(count):
+        x = r.uniform(area[0], area[1])
+        y = r.uniform(area[2], area[3])
+        ln = r.uniform(6, 16)
+        p.line([(x, y), (x - ln * 0.2, y + ln)], r.uniform(0.8, 1.6), color,
+               alpha=alpha * r.uniform(0.35, 1.0), additive=True, taper=0.6)
+        if r.random() < 0.12:
+            p.circle((x, y + ln), r.uniform(1.0, 2.2), color, alpha=alpha * 0.35, additive=True,
+                     glow=0.5, glow_color=color)
+
+
+def rain_splash_ground(p, t, y=280.0, count=26, seed=97, color=(0.65, 0.78, 1.0), alpha=0.4):
+    """Rings where rain meets the floor — cheap but very effective."""
+    r = np.random.default_rng(seed)
+    for i in range(count):
+        x = r.uniform(-1400, 1400)
+        yy = y + r.uniform(0, 420)
+        ph = r.uniform(0, 1.0)
+        u = ((t * r.uniform(0.8, 1.6) + ph) % 1.0)
+        rr = 4 + 22 * u
+        p.circle((x, yy), rr, color, alpha=alpha * (1 - u) ** 2, ring=1.2, additive=True)
+
+
+def stone_lantern(p, x, y, scale=1.0, depth=1.0, color=(0.045, 0.048, 0.06), t=0.0,
+                  glow=1.0, lit=True, seed=0):
+    """Tōrō: the silhouette that instantly says 'shrine'."""
+    s = scale
+    h = 150 * s
+    w = 46 * s
+    # base
+    p.polygon_world([(x - w * 0.9, y), (x + w * 0.9, y), (x + w * 0.7, y - 16 * s),
+                     (x - w * 0.7, y - 16 * s)], color, depth=depth)
+    # shaft
+    p.polygon_world([(x - w * 0.30, y - 16 * s), (x + w * 0.30, y - 16 * s),
+                     (x + w * 0.26, y - h * 0.55), (x - w * 0.26, y - h * 0.55)], color, depth=depth)
+    # light box
+    bx, by = x, y - h * 0.72
+    p.polygon_world([(bx - w * 0.62, by + 24 * s), (bx + w * 0.62, by + 24 * s),
+                     (bx + w * 0.56, by - 24 * s), (bx - w * 0.56, by - 24 * s)], color, depth=depth)
+    if lit:
+        fl = 0.82 + 0.18 * math.sin(t * 7.0 + seed) * math.sin(t * 2.3 + seed * 2)
+        p.polygon_world([(bx - w * 0.42, by + 14 * s), (bx + w * 0.42, by + 14 * s),
+                         (bx + w * 0.38, by - 14 * s), (bx - w * 0.38, by - 14 * s)],
+                        (1.0, 0.74, 0.40), alpha=0.85 * fl, depth=depth, additive=True)
+        p.circle((bx, by), w * 0.9, (1.0, 0.68, 0.32), alpha=0.0, depth=depth,
+                 glow=0.85 * glow * fl, glow_color=(1.0, 0.66, 0.30))
+    # roof
+    p.polygon_world([(bx - w * 1.05, by - 24 * s), (bx + w * 1.05, by - 24 * s),
+                     (bx + w * 0.34, by - 52 * s), (bx - w * 0.34, by - 52 * s)], color, depth=depth)
+    p.polygon_world([(bx - w * 0.16, by - 52 * s), (bx + w * 0.16, by - 52 * s),
+                     (bx + w * 0.10, by - 66 * s), (bx - w * 0.10, by - 66 * s)], color, depth=depth)
+
+
+def puddle(p, x, y, rx=140.0, ry=34.0, color=(0.55, 0.68, 0.95), t=0.0, depth=1.0,
+           alpha=0.16, light_streak=None, seed=0):
+    """A wet patch with a soft reflected streak and slow rings."""
+    p.polygon_world([(x - rx, y), (x - rx * 0.55, y - ry), (x + rx * 0.6, y - ry * 0.9),
+                     (x + rx, y + ry * 0.2), (x + rx * 0.3, y + ry), (x - rx * 0.7, y + ry * 0.8)],
+                    color, alpha=alpha, depth=depth, additive=True, blur=3.0)
+    if light_streak is not None:
+        for i in range(5):
+            k = i / 4
+            p.line([(x - rx * 0.5 + k * 8, y - ry * 0.4 + k * ry * 0.3),
+                    (x + rx * 0.5, y - ry * 0.2 + k * ry * 0.3)],
+                   2.0 + 2 * k, light_streak, alpha=alpha * 0.9 * (1 - k * 0.5), depth=depth,
+                   additive=True, taper=0.4)
+
+
+
+def fence(p, t, color=(0.035, 0.032, 0.030), depth=1.0, x0=-1600.0, x1=1600.0, y=260.0, h=96.0,
+          spacing=54.0):
+    p.polygon_world([(x0, y - h * 0.9), (x1, y - h * 0.9), (x1, y - h * 0.72), (x0, y - h * 0.72)],
+                    color, depth=depth)
+    x = x0
+    while x < x1:
+        p.line([(x, y), (x, y - h)], 4.0, color, depth=depth, alpha=0.95)
+        x += spacing
+
+
+def tree(p, x, y, scale=1.0, depth=1.0, t=0.0, color=(0.028, 0.030, 0.034), leaf=None,
+         seed=0, sway=1.0, height=520.0, spread=260.0, rim=None):
+    """A shrine-yard tree: dark trunk, drooping branches, optional leaf canopy."""
+    r = np.random.default_rng(seed)
+    h = height * scale
+    sw = math.sin(t * 0.8 + seed) * 7 * sway
+    trunk_top = (x + sw * 0.4, y - h)
+    p.line([(x, y), (x + sw * 0.2, y - h * 0.55), trunk_top],
+           max(4.0, 26 * scale), color, depth=depth, taper=0.35)
+    for i in range(6):
+        f = 0.45 + i * 0.09
+        bx = x + sw * f * 0.4
+        by = y - h * f
+        ang = (-0.6 + i * 0.26) * (1 if i % 2 else -1) + sw * 0.02
+        L = spread * scale * r.uniform(0.6, 1.05)
+        end = (bx + math.cos(ang) * L * 0.9, by + math.sin(ang) * L * 0.35 - L * 0.20)
+        p.line([(bx, by), ((bx + end[0]) / 2, end[1] - 20 * scale), end],
+               max(2.0, 9 * scale), color, depth=depth, taper=0.3)
+        if leaf is not None:
+            for k in range(3):
+                lx = bx + (end[0] - bx) * (0.45 + 0.2 * k)
+                ly = by + (end[1] - by) * (0.45 + 0.2 * k) + 10 * scale
+                p.blob((lx, ly), 52 * scale * r.uniform(0.7, 1.2), leaf,
+                       alpha=0.20 * r.uniform(0.6, 1.0), depth=depth, soft=1.0)
+        if rim is not None:
+            p.line([(bx, by), end], 1.4, rim, alpha=0.28, depth=depth)

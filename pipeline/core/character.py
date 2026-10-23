@@ -372,6 +372,40 @@ def P() -> dict:
         "sheathe": dict(px=0, py=-2, spine=182, neck=180, head=180,
                         arm_f=(24, 62), arm_b=(38, 84),
                         leg_f=(14, 0, 88), leg_b=(-14, -2, 92)),
+        # --- chapter one: training ------------------------------------------
+        "stance": dict(px=0, py=10, spine=192, neck=172, head=172,
+                       arm_f=(52, 96), arm_b=(30, 74),
+                       leg_f=(34, -26, 84), leg_b=(-34, -22, 96)),
+        "staff_guard": dict(px=0, py=4, spine=189, neck=176, head=176,
+                            arm_f=(76, 104), arm_b=(44, 76),
+                            leg_f=(28, -18, 84), leg_b=(-28, -16, 96)),
+        "staff_wind": dict(px=0, py=2, spine=176, neck=188, head=188,
+                           arm_f=(132, 168), arm_b=(96, 148),
+                           leg_f=(24, -12, 84), leg_b=(-26, -14, 96)),
+        "staff_swing": dict(px=0, py=6, spine=200, neck=164, head=164,
+                            arm_f=(96, 62), arm_b=(58, 34),
+                            leg_f=(36, -20, 84), leg_b=(-30, -14, 96)),
+        "staff_follow": dict(px=0, py=14, spine=206, neck=156, head=156,
+                             arm_f=(70, 26), arm_b=(36, 2),
+                             leg_f=(40, -30, 84), leg_b=(-34, -20, 96)),
+        "bow": dict(px=0, py=2, spine=136, neck=184, head=184,
+                    arm_f=(16, 26), arm_b=(-14, -6),
+                    leg_f=(6, 0, 88), leg_b=(-6, -1, 92)),
+        "bow_wait": dict(px=0, py=6, spine=142, neck=186, head=186,
+                         arm_f=(24, 44), arm_b=(-8, 4),
+                         leg_f=(10, 2, 88), leg_b=(-10, -2, 92)),
+        "palm_stop": dict(px=0, py=0, spine=186, neck=178, head=178,
+                          arm_f=(94, 96), arm_b=(20, 52),
+                          leg_f=(18, -4, 88), leg_b=(-18, -6, 92)),
+        "sit_seiza": dict(px=0, py=40, spine=178, neck=182, head=182,
+                          arm_f=(28, 70), arm_b=(20, 62),
+                          leg_f=(78, -104, 88), leg_b=(64, -96, 92)),
+        "reach_up": dict(px=0, py=-4, spine=186, neck=176, head=176,
+                         arm_f=(96, 148), arm_b=(84, 132),
+                         leg_f=(16, -2, 88), leg_b=(-16, -4, 92)),
+        "tired": dict(px=0, py=10, spine=166, neck=186, head=186,
+                      arm_f=(28, 60), arm_b=(-18, 22),
+                      leg_f=(18, -10, 88), leg_b=(-20, -12, 92)),
     }
 
 
@@ -595,3 +629,54 @@ def draw_afterimage(p: "Painter", pose: Pose, rig: Rig, look: Look, alpha: float
                      (sk.pelvis, sk.chest, rig.w_spine)):
         p.line([a, b], wd * 2, c, alpha=alpha, depth=depth, glow=0.25, additive=False)
     p.circle(sk.head_c, sk.head_r, c, alpha=alpha, depth=depth, ring=rig.w_spine * 0.4)
+
+
+# --------------------------------------------------------------------- props
+def staff_line(sk: Skeleton, angle_deg: float, length: float = 210.0, grip: float = 0.34):
+    """End points of a staff/bokken held in the front hand at an absolute angle."""
+    h = sk.hand_f
+    dx, dy = dirv(angle_deg)
+    a = (h[0] - dx * length * grip, h[1] - dy * length * grip)
+    b = (h[0] + dx * length * (1 - grip), h[1] + dy * length * (1 - grip))
+    return a, b
+
+
+def draw_staff(p: "Painter", sk: Skeleton, look: Look, angle: float, length: float = 210.0,
+               depth: float = 1.0, alpha: float = 1.0, blade: bool = False, glow: float = 0.0):
+    """A wooden practice staff (or a blade when ``blade`` is set)."""
+    a, b = staff_line(sk, angle, length)
+    w = 7.0 * sk.scale * look.w_scale
+    if blade:
+        col = np.asarray((0.86, 0.92, 1.0), np.float32)
+        p.line([a, b], w * 1.5, tuple(np.asarray(look.ink, np.float32)), alpha=alpha, depth=depth,
+               taper=0.35)
+        p.line([a, b], w * 0.95, tuple(col), alpha=alpha, depth=depth, taper=0.12,
+               glow=glow, glow_color=(0.6, 0.85, 1.0))
+    else:
+        wood = np.asarray((0.44, 0.30, 0.19), np.float32)
+        p.line([a, b], w * 1.9, tuple(np.asarray(look.ink, np.float32)), alpha=alpha, depth=depth,
+               taper=0.85)
+        p.line([a, b], w * 1.25, tuple(wood), alpha=alpha, depth=depth, taper=0.85)
+        # highlight along the top edge
+        p.line([a, b], w * 0.30, tuple(wood * 1.9 + 0.06), alpha=alpha * 0.8, depth=depth,
+               taper=0.85)
+    p.circle(sk.hand_f, w * 0.85, tuple(np.asarray(look.ink, np.float32)), alpha=alpha, depth=depth)
+    p.circle(sk.hand_f, w * 0.58, tuple(np.asarray(look.color, np.float32)), alpha=alpha, depth=depth)
+
+
+def draw_sash(p: "Painter", sk: Skeleton, look: Look, color=(0.55, 0.16, 0.12), depth=1.0,
+              alpha=1.0, w: float = 1.0):
+    """A belt across the hips, plus two hanging tails — reads as a robe at distance."""
+    hip = sk.hip
+    che = sk.chest
+    dx, dy = che[0] - hip[0], che[1] - hip[1]
+    L = math.hypot(dx, dy) or 1.0
+    nx, ny = -dy / L, dx / L
+    hw = 17.0 * sk.scale * w
+    p.line([(hip[0] - nx * hw, hip[1] - ny * hw), (hip[0] + nx * hw, hip[1] + ny * hw)],
+           13.0 * sk.scale * w, color, alpha=alpha, depth=depth, taper=0.95)
+    # a knot and two hanging tails (reads as a robe at distance)
+    for s in (-1, 1):
+        p.line([(hip[0] + nx * hw * 0.35 * s, hip[1] + ny * hw * 0.35 * s + 4),
+                (hip[0] + nx * hw * 0.5 * s - sk.facing * 13, hip[1] + 46 * sk.scale)],
+               5.0 * sk.scale * w, color, alpha=alpha * 0.92, depth=depth, taper=0.35)

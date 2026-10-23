@@ -360,3 +360,50 @@ def freq(name: str) -> float:
 
 def chord(names: Sequence[str]) -> list[float]:
     return [freq(n) for n in names]
+
+
+def wood_hit(t0: float, amp=0.7, pitch=1.0, seed=15) -> tuple[float, np.ndarray]:
+    """Bokken striking bokken: sharp transient + wooden body."""
+    t = _t(0.55)
+    rng = np.random.default_rng(seed)
+    n = bandpass(rng.standard_normal(len(t)).astype(np.float32), 900 * pitch, 7000, order=2)
+    crack = n * env(t, 0.0008, 0.022, 1.0)
+    body = (sine(330 * pitch, t) * 0.5 + sine(520 * pitch, t) * 0.35 +
+            sine(870 * pitch, t) * 0.2) * env(t, 0.001, 0.075, 1.7)
+    thud = sine(120 * pitch, t) * env(t, 0.002, 0.05, 2.0) * 0.6
+    return t0, ((crack * 1.1 + body + thud) * amp).astype(np.float32)
+
+
+def cloth_rustle(t0: float, dur=0.45, amp=0.16, seed=17) -> tuple[float, np.ndarray]:
+    t = _t(dur)
+    rng = np.random.default_rng(seed)
+    x = bandpass(rng.standard_normal(len(t)).astype(np.float32), 700, 5200)
+    e = env(t, 0.02, dur * 0.35, 1.2)
+    return t0, (x * e * amp).astype(np.float32)
+
+
+def freeze_sting(t0: float, amp=0.55, base=1560.0) -> tuple[float, np.ndarray]:
+    """Time stops: reversed riser into a single bell + sub."""
+    dur = 2.2
+    t = _t(dur)
+    ping = (sine(base, t) * 0.6 + sine(base * 2.01, t) * 0.25 + sine(base * 3.02, t) * 0.12) * \
+        env(t, 0.001, 0.9, 1.6)
+    sub = sine(46, t) * env(t, 0.004, 0.7, 1.8) * 0.8
+    return t0, ((ping + sub) * amp).astype(np.float32)
+
+
+def breath(t0: float, dur=0.9, amp=0.22, seed=19, pitch=1.0) -> tuple[float, np.ndarray]:
+    """A held exhale — the sound that ends a scene."""
+    t = _t(dur)
+    rng = np.random.default_rng(seed)
+    x = bandpass(rng.standard_normal(len(t)).astype(np.float32), 300 * pitch, 2600 * pitch)
+    e = np.sin(np.pi * np.clip(t / dur, 0, 1)) ** 1.5
+    return t0, (x * e * amp).astype(np.float32)
+
+
+def rain_bed(dur: float, amp=0.5, seed=3) -> tuple[float, np.ndarray]:
+    t = _t(dur)
+    x = np.random.default_rng(seed).standard_normal(len(t)).astype(np.float32)
+    x = bandpass(x, 900, 9000)
+    e = np.minimum(t / 0.4, 1) * np.minimum((dur - t) / 0.5, 1)
+    return 0.0, (x * e * amp).astype(np.float32)
