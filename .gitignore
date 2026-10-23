@@ -1,11 +1,11 @@
-# Build artifacts
+# StykAnimate reference source is cloned locally, not vendored into git
+vendor/stykanimate/
+
+# intermediates
+frames/
+artifacts/
 renders/tmp/
-renders/.frames_*/
-renders/frames/
-*.pyc
 __pycache__/
+*.pyc
 .venv/
-node_modules/
-assets/bg/raw/
-renders/preview/
 *.mp4.tmp
