@@ -131,44 +131,16 @@ def draw_background(cv: Canvas, t: float, scene) -> None:
     cv.img.paste(vignette(), (0, 0), vignette())
 
 
-# the renderer sets this to the current frame's shadow overlay
-SHADOW_LAYER: list = [None]
-
-REAR_ARMS = (3, 4)
-REAR_LEGS = (7, 8)
+def overlay(cv: Canvas):
+    layer = Image.new("RGBA", (cv.w, cv.h), (0, 0, 0, 0))
+    return layer, ImageDraw.Draw(layer)
 
 
-def draw_fighter(cv: Canvas, track, t: float, squash_when_down: bool = False) -> None:
-    pose = track.pose_at(t)
-    sk = solve(pose)
-    u = cv.unit() * pose.scale
-
-    outline = max(2.0, 5.0 * u)
-
-    def limb(sid, colour):
-        s, e = sk.starts[sid], sk.pts[sid]
-        p0, p1 = cv.wp(s), cv.wp(e)
-        w = SEG[sid][3] * u
-        cv.line(p0, p1, w + outline, INK)
-        cv.line(p0, p1, w, colour)
-
-    for sid in (7, 9, 8, 10):
-        limb(sid, track.dark if sid in REAR_LEGS else track.colour)
-    limb(1, track.colour)
-    limb(3, track.dark)
-    limb(5, track.colour)
-    limb(4, track.dark)
-    limb(6, track.colour)
-
-    # head: white disc, ink outline outside it, the fighter's colour as a rim
-    c = cv.wp(sk.head)
-    r = sk.head_r * u
-    ring = max(2.0, 3.0 * u)
-    cv.circle(c, r, (252, 250, 246), width=0, fill=(252, 250, 246))
-    cv.circle(c, r + ring * 0.55, INK, width=max(2.2, 4.6 * u))
-    cv.circle(c, r - max(1.4, 2.4 * u), track.colour, width=max(2.0, 4.0 * u))
-    cv.circle((c[0] - r * 0.32, c[1] - r * 0.36), r * 0.16, (255, 255, 255),
-              width=0, fill=(255, 255, 255), alpha=200)
+def composite(cv: Canvas, layer: Image.Image) -> None:
+    """One alpha composite for a whole batch of translucent shapes."""
+    cv.flush()
+    cv.img = Image.alpha_composite(cv.img.convert("RGBA"), layer).convert("RGB")
+    cv.d = ImageDraw.Draw(cv.img)
 
 
 _scene_cache = {}
@@ -181,44 +153,67 @@ def scene():
     return _scene_cache["s"]
 
 
-def overlay(cv: Canvas) -> tuple[Image.Image, ImageDraw.ImageDraw]:
-    layer = Image.new("RGBA", (cv.w, cv.h), (0, 0, 0, 0))
-    return layer, ImageDraw.Draw(layer)
-
-
-def composite(cv: Canvas, layer: Image.Image) -> None:
-    """One alpha composite for a whole batch of translucent shapes."""
-    cv.flush()
-    cv.img = Image.alpha_composite(cv.img.convert("RGBA"), layer).convert("RGB")
-    cv.d = ImageDraw.Draw(cv.img)
-
-
 def shadow(d: ImageDraw.ImageDraw, cv: Canvas, sk, lift: float) -> None:
+    """A flat contact shadow: wide and faint under an airborne fighter."""
     fx = (sk.pts[8][0] + sk.pts[10][0]) * 0.5
     c = cv.wp((fx, GROUND - 2))
-    rx = (70.0 + 26.0 * lift) * cv.unit() * sk.scale
-    ry = rx * (0.20 - 0.05 * min(lift, 1.0))
-    alpha = int(max(18, 92 - 46 * lift))
-    d.ellipse([c[0] - rx, c[1] - ry, c[0] + rx, c[1] + ry], fill=(24, 20, 18, alpha))
+    rx = (78.0 + 26.0 * lift) * cv.unit() * sk.scale
+    ry = rx * (0.17 - 0.04 * min(lift, 1.0))
+    alpha = int(max(16, 76 - 40 * lift))
+    d.ellipse([c[0] - rx, c[1] - ry, c[0] + rx, c[1] + ry], fill=(20, 16, 14, alpha))
+
+
+# the renderer sets this to the current frame's shadow overlay
+SHADOW_LAYER: list = [None]
+
+# limb draw order: rear leg, lead leg, spine, rear arm, lead arm, then the head
+DRAW_ORDER = (7, 9, 8, 10, 1, 3, 4, 5, 6)
+
+
+def draw_fighter(cv: Canvas, track, t: float) -> None:
+    """Flat silhouette: no outline, solid round-capped limbs, solid head."""
+    pose = track.pose_at(t)
+    sk = solve(pose)
+    u = cv.unit() * pose.scale
+    colour = track.colour
+
+    for sid in DRAW_ORDER:
+        _id, _parent, _length, thick, kind = SEG[sid]
+        if kind == "circle":
+            continue
+        p0, p1 = cv.wp(sk.starts[sid]), cv.wp(sk.pts[sid])
+        cv.line(p0, p1, thick * u * 1.15, colour)
+
+    c = cv.wp(sk.head)
+    r = sk.head_r * u
+    cv.circle(c, r, colour, width=0, fill=colour)
 
 
 def trails(cv: Canvas, track, t: float, dt: float = 0.075) -> None:
-    """Compare limbs with where they were 0.075 s ago; draw a fading streak."""
+    """Speed lines: compare each limb with where it was 0.075 s ago."""
     if t < dt + 0.02:
         return
     now = track.skel(t)
     then = track.skel(t - dt)
-    prev = then
-    for i, sid in enumerate((4, 6, 8, 10)):
-        a, b = prev.pts[sid], now.pts[sid]
-        d = math.hypot(b[0] - a[0], b[1] - a[1])
-        if d < 9.0:
+    u = cv.unit() * now.scale
+    for sid in (4, 6, 8, 10):
+        a, b = then.pts[sid], now.pts[sid]
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        d = math.hypot(dx, dy)
+        if d < 12.0:
             continue
-        k = min(1.0, (d - 9.0) / 34.0)
-        p0, p1 = cv.wp(a), cv.wp(b)
-        w = max(1.5, (7.0 * k + 2.0) * cv.unit())
-        cv.line(p0, p1, w, track.colour, alpha=int(120 * k), caps=False)
-        cv.line(p0, p1, w * 0.40, (250, 246, 240), alpha=int(170 * k), caps=False)
+        k = min(1.0, (d - 12.0) / 30.0)
+        nx, ny = -dy / d, dx / d
+        p1 = cv.wp(b)
+        for i, off in enumerate((-0.55, 0.0, 0.62)):
+            fade = 1.0 - abs(off) * 0.55
+            ln = (d * (0.85 + 0.25 * (1 - abs(off)))) * u
+            o = off * 9.0 * u
+            p0 = (p1[0] - dx * u * (0.85 + 0.25 * (1 - abs(off))) + nx * o,
+                  p1[1] - dy * u * (0.85 + 0.25 * (1 - abs(off))) + ny * o)
+            cv.line(p0, (p1[0] + nx * o, p1[1] + ny * o),
+                    max(1.2, (3.4 - abs(off) * 1.6) * u),
+                    track.colour, alpha=int(120 * k * fade), caps=False)
 
 
 # --------------------------------------------------------------------- effects
@@ -233,25 +228,33 @@ def star(cx, cy, r_out, r_in, n=7, rot=0.0):
 
 def draw_impacts(cv: Canvas, impacts, t: float, overlay_flash: list) -> None:
     u = cv.unit()
+    seen = set()
     for e in impacts:
         age = t - e["t"]
         if age < 0:
             continue
+        if e["kind"] in ("clash", "final"):
+            kkey = round(e["t"], 2)
+            if kkey in seen:
+                continue
+            seen.add(kkey)
         size = e.get("size", 1.0)
         kind = e["kind"]
+        if e.get("x") is None:
+            continue
         final = kind == "final"
         cx, cy = cv.wp((e["x"], e["y"]))
         life = 0.55 if final else 0.38
 
         if age < 0.10:
             k = age / 0.10
-            overlay_flash.append(int((150 if final else 95) * (1 - k) ** 2 * size))
+            overlay_flash.append(int((58 if final else 46) * (1 - k) ** 2 * size))
 
         if age < life:
             k = age / life
             # expanding ring
             ring = 0.50 if kind == "clash" else 0.62 if kind == "block" else 0.80
-            rr = (14 + 92 * size * ring) * u * (0.35 + 1.15 * (1 - (1 - k) ** 2))
+            rr = (12 + 74 * size * ring) * u * (0.35 + 1.15 * (1 - (1 - k) ** 2))
             cv.circle((cx, cy), rr, e.get("colour", (240, 236, 228)),
                       width=max(1.6, (4.5 if final else 3.2) * u * (1 - k)),
                       alpha=int(210 * (1 - k) ** 1.3))
@@ -270,7 +273,7 @@ def draw_impacts(cv: Canvas, impacts, t: float, overlay_flash: list) -> None:
             plife = 0.60 if final else 0.42
             k = age / plife
             rng = np.random.default_rng(int(e["t"] * 1000) % 99991)
-            n = 14 if final else 9
+            n = 11 if final else 8
             for i in range(n):
                 ang = rng.uniform(0, math.tau)
                 spd = rng.uniform(0.5, 1.3) * (1.0 + 0.4 * size)
@@ -288,9 +291,10 @@ def draw_impacts(cv: Canvas, impacts, t: float, overlay_flash: list) -> None:
             k = age / 0.30
             rng = np.random.default_rng(int(e["t"] * 977) % 65537)
             base = 0.5 + e["t"] * 1.7
-            for i in range(6 + (4 if final else 0)):
-                a = base + i * math.tau / (6 + (4 if final else 0))
-                ln = (26 + 62 * size) * u * (1 - k) ** 1.4
+            n_sp = 6 + (3 if final else 0)
+            for i in range(n_sp):
+                a = base + i * math.tau / n_sp
+                ln = (20 + 46 * size) * u * (1 - k) ** 1.4
                 r0 = (10 + 12 * size) * u
                 p0 = (cx + math.cos(a) * r0, cy + math.sin(a) * r0)
                 p1 = (cx + math.cos(a) * (r0 + ln), cy + math.sin(a) * (r0 + ln))
@@ -397,13 +401,13 @@ def draw_hud(cv: Canvas, scene, t: float) -> None:
         a = int(255 * max(0.0, fade))
         if style == "title":
             pop = 1.0 + 0.06 * max(0.0, 1.0 - (t - txt["t0"]) / 0.35)
-            y = 168 if txt["t1"] < 10 else 250
+            y = 168 if txt["t1"] < 10 else 148
             draw_text(cv, txt["text"], (DESIGN_W // 2 + 3, y + 3), int(78 * pop),
                       (12, 12, 14), alpha=int(a * 0.45), spacing=6)
             draw_text(cv, txt["text"], (DESIGN_W // 2, y), int(78 * pop),
                       (250, 246, 238), alpha=a, spacing=6)
         elif style == "sub":
-            y = 226 if txt["t1"] < 10 else 318
+            y = 226 if txt["t1"] < 10 else 206
             draw_text(cv, txt["text"], (DESIGN_W // 2, y), 30,
                       (238, 232, 220), alpha=a, spacing=4)
         elif style == "fight":

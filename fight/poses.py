@@ -22,11 +22,15 @@ import math
 from .core import SEG, Pose, solve
 
 D2R = math.pi / 180.0
-L_THIGH = SEG[7][2]
-L_SHIN = SEG[8][2]
+ARM_K = 1.24          # limb proportions of the reference stickman
+LEG_K = 1.10
+HEAD_K = 1.42
+
+L_THIGH = SEG[7][2] * LEG_K
+L_SHIN = SEG[8][2] * LEG_K
 LEG = L_THIGH + L_SHIN
-UPPER_LEN = SEG[3][2]
-FORE_LEN = SEG[4][2]
+UPPER_LEN = SEG[3][2] * ARM_K
+FORE_LEN = SEG[4][2] * ARM_K
 ARM = UPPER_LEN + FORE_LEN
 TORSO = SEG[1][2]
 
@@ -130,32 +134,48 @@ def _arm_angles(up: float, fore: float, facing: int):
     return u, f
 
 
-def to_pose(p: dict, x: float, ground: float, facing: int = 1, scale: float = 1.0) -> Pose:
-    q = p if facing > 0 else mirror(p)
-    f = 1 if facing > 0 else -1
+def to_pose(p: dict, x: float, ground: float, facing: int = 1, scale: float = 1.0,
+            widen: float = 1.0) -> Pose:
+    """Turn one pose into a drawable Pose.
+
+    The pose is always solved in a canonical right-facing frame (a positive foot
+    offset means "in front of the fighter"), and the finished body is then
+    reflected once about the hips when ``facing`` is -1. Reflecting the solved
+    figure instead of the inputs is what keeps a left-facing fighter's arms in
+    front of it: mirroring the input angles and *also* negating the resulting
+    angles cancelled out, which left blue punching away from its opponent.
+
+    ``widen`` stretches both planted feet apart for a wider stance; the leg
+    solver then drops the hips as far as the new stance allows.
+    """
     # a fallen fighter cannot hold its hips up, so a pose may pin the hip height
-    hh = (q["hip"] if "hip" in q else _hip_height(q["foot_l"], q["foot_r"])) * scale
-    hip_y = ground - hh + q["crouch"] - q.get("air", 0.0)
-    hip = (0.0, 0.0)
-    # feet are expressed relative to the hip, in facing space
-    fl = (q["foot_l"][0] * scale, hh - q["foot_l"][1] * scale)
-    fr = (q["foot_r"][0] * scale, hh - q["foot_r"][1] * scale)
-    tl, sl = _leg_ik(hip, fl, f, LEG_REACH if q["foot_l"][1] <= 0.5 else 0.995)
-    tr, sr = _leg_ik(hip, fr, f, LEG_REACH if q["foot_r"][1] <= 0.5 else 0.995)
-    au, af = _arm_angles(q["a_up"], q["a_fore"], f)
-    bu, bf = _arm_angles(q["b_up"], q["b_fore"], f)
-    torso = q["torso"] * D2R if facing > 0 else (180.0 - q["torso"]) * D2R
-    # the head circle is a segment too: its angle decides where the head sits.
-    # It must follow the spine (up the neck), otherwise the head is drawn in
-    # front of the shoulders — which is what made every guard look like fists
-    # folded into the face.
-    head_ang = torso + q["head"] * D2R
-    ang = (torso, head_ang, au if facing > 0 else math.pi - au, af if facing > 0 else math.pi - af,
-           bu if facing > 0 else math.pi - bu, bf if facing > 0 else math.pi - bf,
-           tl if facing > 0 else math.pi - tl, sl if facing > 0 else math.pi - sl,
-           tr if facing > 0 else math.pi - tr, sr if facing > 0 else math.pi - sr)
+    fl_x = p["foot_l"][0] * (widen if p["foot_l"][1] <= 0.5 else 1.0)
+    fr_x = p["foot_r"][0] * (widen if p["foot_r"][1] <= 0.5 else 1.0)
+    hh = (p["hip"] if "hip" in p else _hip_height((fl_x, p["foot_l"][1]),
+                                                  (fr_x, p["foot_r"][1]))) * scale
+    hip_y = ground - hh + p["crouch"] - p.get("air", 0.0)
+
+    # feet, relative to the hip, in the canonical frame (+x = in front)
+    fl = (fl_x * scale, hh - p["foot_l"][1] * scale)
+    fr = (fr_x * scale, hh - p["foot_r"][1] * scale)
+    tl, sl = _leg_ik((0.0, 0.0), fl, 1, LEG_REACH if p["foot_l"][1] <= 0.5 else 0.995)
+    tr, sr = _leg_ik((0.0, 0.0), fr, 1, LEG_REACH if p["foot_r"][1] <= 0.5 else 0.995)
+
+    au, af = _arm_angles(p["a_up"], p["a_fore"], 1)
+    bu, bf = _arm_angles(p["b_up"], p["b_fore"], 1)
+
+    torso = p["torso"] * D2R
+    # the head circle is a segment too: its angle decides where the head sits,
+    # so it must follow the spine or the head is drawn in front of the shoulders
+    head_ang = torso + p["head"] * D2R
+    ang = [torso, head_ang, au, af, bu, bf, tl, sl, tr, sr]
+
+    if facing < 0:
+        # one reflection of the solved figure: angle -> pi - angle
+        ang = [math.pi - a for a in ang]
     return Pose(x=x, y=hip_y, facing=facing, scale=1.0,
-                head_turn=q["head"] * D2R, angles=tuple(ang))
+                head_turn=(p["head"] * D2R) * (1 if facing > 0 else -1),
+                angles=tuple(ang), arm_k=ARM_K, leg_k=LEG_K, head_k=HEAD_K)
 
 
 def feet_of(p: dict):
@@ -189,8 +209,9 @@ CROSS = P(torso=-70, foot_l=(48, 0), foot_r=(-22, 0),
 HOOK = P(torso=-76, foot_l=(38, 0), foot_r=(-26, 0),
          a_up=14, a_fore=-42, b_up=48, b_fore=-70)
 
-UPPERCUT = P(torso=-88, foot_l=(32, 0), foot_r=(-28, 0),
-             a_up=44, a_fore=-104, b_up=52, b_fore=-84)
+# an uppercut ends with the striking arm driven up and forward, not folded
+UPPERCUT = P(torso=-86, foot_l=(40, 0), foot_r=(-26, 0),
+             a_up=42, a_fore=-96, b_up=-34, b_fore=-26)
 
 BLOCK_HI = P(torso=-79, foot_l=(28, 0), foot_r=(-30, 0),
              a_up=26, a_fore=-104, b_up=40, b_fore=-118)

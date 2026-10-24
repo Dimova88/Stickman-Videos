@@ -59,6 +59,11 @@ class Pose:
     scale: float = 1.0
     head_turn: float = 0.0
     angles: tuple = (0.0,) * 10
+    # a pose may stretch the limbs: the reference stickman has longer arms than
+    # StykAnimate's stock Walker, and a bigger head
+    arm_k: float = 1.0
+    leg_k: float = 1.0
+    head_k: float = 1.0
 
     def copy(self, **kw) -> "Pose":
         return replace(self, **kw)
@@ -192,6 +197,10 @@ def solve(pose: Pose) -> Skeleton:
     starts, ends = {}, {}
     for sid in SEGMENT_ORDER:
         _id, parent, length, _th, kind = SEG[sid]
+        if sid in (3, 4, 5, 6):
+            length *= pose.arm_k
+        elif sid in (7, 8, 9, 10):
+            length *= pose.leg_k
         start = pts[parent]
         a = pose.angles[sid - 1]
         end = (start[0] + math.cos(a) * length * pose.scale,
@@ -202,7 +211,8 @@ def solve(pose: Pose) -> Skeleton:
     # StykAnimate draws a circle centred on (start+end)/2 with radius = length/2
     head_c = ((starts[2][0] + ends[2][0]) * 0.5, (starts[2][1] + ends[2][1]) * 0.5)
     return Skeleton(pts=ends, starts=starts, head=head_c,
-                    head_r=SEG[2][2] * 0.5 * pose.scale, facing=pose.facing, scale=pose.scale)
+                    head_r=SEG[2][2] * 0.5 * pose.scale * pose.head_k,
+                    facing=pose.facing, scale=pose.scale)
 
 
 def plant(pose: Pose, ground: float, which=(8, 10)) -> Pose:

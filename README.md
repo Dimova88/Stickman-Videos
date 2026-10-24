@@ -118,30 +118,36 @@ The reference process, reimplemented end to end:
    crops a 1280×720 window from it, offset by a slow camera drift plus the
    impact shake, and a soft vertical/radial vignette is laid over the top. The
    landscape never moves in 3D — only the crop does.
-2. **Figures.** The 10-segment Pivot skeleton from StykAnimate. Rear limbs are
-   drawn darker, every limb gets an ink outline so it reads against the peaks,
-   the head is a white disc with a coloured rim, and a contact shadow widens and
-   fades while the fighter is airborne.
-3. **Keyframes.** Red faces right, blue faces left; every pose is mirrored for
+2. **Figures.** The 10-segment Pivot skeleton from StykAnimate, drawn as flat
+   coloured silhouettes: no outline, solid round-capped limbs, a solid head in
+   the fighter's colour, and a contact shadow that widens and fades while the
+   fighter is airborne. The rig is stretched to the reference stickman's
+   proportions (`ARM_K 1.24`, `LEG_K 1.10`, `HEAD_K 1.42`) so the head reads as
+   a head and an extended punch fills the gap between the two fighters.
+3. **Mirroring.** A pose is always solved in a canonical right-facing frame and
+   the finished body is reflected once about the hips for the left-facing
+   fighter. Reflecting the *solved* figure (not the input angles twice) is what
+   keeps blue's guard, punches and kicks aimed at its opponent.
+4. **Keyframes.** Red faces right, blue faces left; every pose is mirrored for
    blue. A key is `time · x · pose`, interpolated with smoothstep
    (`u²·(3−2u)`) on the root, the height and every joint.
-4. **Impacts.** 29 entries, each with instant, screen position, colour, type
+5. **Impacts.** 29 entries, each with instant, screen position, colour, type
    (`block` / `hit` / `clash` / `final`), intensity and damage. That one list
    drives body reactions, stars, rings, particles, sparks, camera shake, health
    bars and the soundtrack — nothing is hand-placed twice.
-5. **Effects.** Trails compare each hand and foot with where it was 0.075 s ago;
+6. **Effects.** Trails compare each hand and foot with where it was 0.075 s ago;
    impacts get a white flash, an expanding ring, a radial star, decaying sparks
    and seeded particles (fixed seeds, so renders are reproducible); 11 dust
    events throw 12+ particles per landing and sweep.
-6. **HUD.** Health bars (damage eased over 0.32 s), a timer, MOUNTAIN CLASH /
+7. **HUD.** Health bars (damage eased over 0.32 s), a timer, MOUNTAIN CLASH /
    RED VS BLUE / FIGHT! / DOWN! / K.O. / BLUE WINS / VICTORY ON THE SUMMIT,
    MOUNTAIN • ROUND 1, thin cinematic bars and fades.
-7. **Sound.** Fully synthesised at 44.1 kHz stereo: a low pulse bed, kick on the
+8. **Sound.** Fully synthesised at 44.1 kHz stereo: a low pulse bed, kick on the
    half-second, snare on the off-beats, hats on the sixteenths, whooshes before
    every strike, low thuds plus filtered noise for hits, a metallic component
    for blocks, a deeper hit for the finisher, constant-power panning by screen
    position, and a C–E–G–C major rise after the win.
-8. **Encode.** 720 frames go straight into FFmpeg as raw RGB (no PNG dump),
+9. **Encode.** 720 frames go straight into FFmpeg as raw RGB (no PNG dump),
    libx264 CRF 18 yuv420p, then the WAV is muxed in as 192 kbps AAC with
    `+faststart`.
 
