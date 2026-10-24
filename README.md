@@ -114,10 +114,11 @@ The current version authors **body angles, not targets**:
 
 The reference process, reimplemented end to end:
 
-1. **Background.** One 1376×768 painted plate is scaled to 1320×742; each frame
-   crops a 1280×720 window from it, offset by a slow camera drift plus the
-   impact shake, and a soft vertical/radial vignette is laid over the top. The
-   landscape never moves in 3D — only the crop does.
+1. **Background.** One 1376×768 painted plate is scaled to 1320×742, and the
+   push-in is pre-scaled once into 65 plates (one per zoom step, vignette baked
+   in); each frame is then an integer crop of one — or a blend of the two
+   neighbouring — plates, offset by a slow camera drift plus the impact shake.
+   The landscape never moves in 3D — only the crop does.
 2. **Figures.** The 10-segment Pivot skeleton from StykAnimate, drawn as flat
    coloured silhouettes: no outline, no joint circles (each limb is a tapered
    capsule and the joint discs match the bone width, so a knee or an elbow is
@@ -162,9 +163,12 @@ The reference process, reimplemented end to end:
    Constant-power panning by screen position, and a C–E–G–C major rise after the
    win. Measured on the finished file: peak 0.95, RMS 0.12, and a 2–5x energy
    jump at every one of the 29 impacts.
-9. **Encode.** 720 frames go straight into FFmpeg as raw RGB (no PNG dump),
-   libx264 CRF 18 yuv420p, then the WAV is muxed in as 192 kbps AAC with
-   `+faststart`.
+9. **Encode.** The clip is cut into one contiguous segment per worker; each
+   worker draws *and* encodes its own segment (frames never cross a process
+   pipe) with libx264 `veryfast` / CRF 16 / `-tune animation`, yuv420p. The
+   segments are concatenated with `-c copy`, then the WAV is muxed in as
+   192 kbps AAC with `+faststart`. `--preset/--crf/--tune` override the
+   defaults.
 
 ### Beat sheet
 
@@ -180,6 +184,61 @@ The reference process, reimplemented end to end:
 | 20.2–23.4 | both up, second clash, blue's jab-cross-kick sequence |
 | 23.4–25.4 | blue's aerial kick and the finishing uppercut — K.O. |
 | 25.4–30 | blue's victory pose, BLUE WINS, fade to black |
+
+### Performance
+
+The 30 s test renders in **15–17 s on 2 vCPU**, down from 47–51 s, with the
+picture verified against the previous master rather than assumed:
+
+| stage | before | after | how |
+| --- | --- | --- | --- |
+| one frame | 37.8 ms | 9.1 ms | background plates, bounding-box compositing, cached health curve |
+| 720 frames, 1 core | 27 s | 6.5 s | |
+| encode (720p) | 24.3 s | 10.5 s | `veryfast` + CRF 16 + `-tune animation` |
+| whole render, 2 cores | 47–51 s | 15–17 s | one render+encode process per core, no per-frame IPC |
+
+What was actually hot, and what changed:
+
+* **Background, 14.7 ms → 0.6 ms.** A 1280×720 bilinear resample per frame for
+  the push-in was 11 ms of it; a full-frame `AFFINE` was *worse* (24.7 ms). So
+  the zoom is baked into a ladder of plates at startup (65 × 1320×742 px,
+  ~0.7 s, 190 MB) and a frame crops a window out of two neighbours and blends
+  them. The vignette is baked into the plates too — the camera can drag it by
+  at most the 20×11 px pan margin, which moves the alpha by ~2/255.
+* **Compositing, 8.3 ms → 0.5 ms** per translucent batch. Shadows and dust used
+  to be a full-frame RGBA layer each; they now share one overlay cropped to the
+  bounding box of what is drawn, and the finished crop *becomes* the frame
+  instead of being pasted into a fresh canvas.
+* **Health bars, 1.1 ms → ~0.** The two bars re-integrated the damage curve from
+  t=0 at 120 Hz twice per frame; the integrator now keeps its state between
+  calls, with bit-identical results.
+* **Encode.** At equal quality `veryfast`/CRF 16/`-tune animation` measures the
+  same PSNR as `slow`/CRF 18 (36.92 vs 36.93 dB on a 240-frame lossless
+  reference) in a third of the time, for 17 % more bytes (2.72 vs 2.32 MB per
+  10 s — irrelevant at this length).
+* **Pipeline.** Frames are no longer pickled through the parent: each worker
+  owns a segment and an encoder. The 2 s soundtrack is synthesised in its own
+  process while the frames are drawn instead of afterwards.
+
+Quality, measured:
+
+* Reference frames against the pre-refactor renderer: mean |Δ| 0.6–2.2/255,
+  p99 ≤ 28, and only where a sharp edge in the *photographic* background lands
+  on a different sub-pixel sampling phase. On the fighters and the HUD —
+  everything that is drawn, not resampled — the maximum difference is 16 levels,
+  on antialiased fringes.
+* Sharpness: edge energy of the finished frame is 1.3 % below the old render,
+  i.e. under a quarter of a pixel of softening (a 0.3 px Gaussian measures
+  −1.1 %). Dropping the blend between plate levels would recover it but make the
+  push-in step once a second, which is the worse trade.
+* Finished 30 s master against the previous one: **PSNR 39.3 dB, SSIM 0.980**
+  (chroma 48 dB), and the soundtrack is identical — peak and RMS match to three
+  decimals. The join between the two encoded segments (frame 360) sits inside
+  the normal frame-to-frame spread, so there is no seam.
+
+The same run now also fixes previews: `--w 960/640` used to show an upper-left
+crop of the 1280 background, and the HUD type did not scale with the frame, so
+the storyboard had its title running off the edge.
 
 ## Status
 

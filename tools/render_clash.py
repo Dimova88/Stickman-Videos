@@ -24,6 +24,9 @@ def main() -> None:
     ap.add_argument("--no-audio", action="store_true")
     ap.add_argument("--start", type=float, default=0.0)
     ap.add_argument("--end", type=float, default=DURATION)
+    ap.add_argument("--preset", default="veryfast")
+    ap.add_argument("--crf", type=int, default=16)
+    ap.add_argument("--tune", default="animation")
     ap.add_argument("--storyboard", type=int, default=0,
                     help="render N evenly spaced moments to renders/storyboard.jpg")
     args = ap.parse_args()
@@ -35,7 +38,8 @@ def main() -> None:
         return
     t0 = time.time()
     render(args.out, w=args.w, h=h, workers=args.workers, audio=not args.no_audio,
-           start=args.start, end=args.end)
+           start=args.start, end=args.end, preset=args.preset, crf=args.crf,
+           tune=args.tune)
     print(f"total {time.time() - t0:.1f}s")
 
 

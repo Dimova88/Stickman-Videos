@@ -1,16 +1,17 @@
 """Mountains Clash, 30 s test — renderer.
 
-One frame = background crop (with camera drift and impact shake) -> vignette ->
-fighters (rear limbs darker, ink outline, contact shadow) -> motion trails ->
-impact effects -> dust -> HUD (health bars, timer, titles, cinematic bars) ->
-fades. Frames are piped to FFmpeg as raw RGB, never written to disk as stills,
-and the synthesised WAV is muxed on afterwards.
+One frame = background crop (with camera drift and impact shake, vignette
+already in the plate) -> contact shadows -> fighters -> motion trails -> impact
+effects -> dust -> HUD (health bars, timer, titles, cinematic bars) -> fades.
+Frames go straight into FFmpeg as raw RGB, never written to disk as stills, and
+the synthesised WAV is muxed on afterwards.
 """
 from __future__ import annotations
 
 import math
 import os
 import subprocess
+import time
 import wave
 
 import numpy as np
@@ -48,16 +49,71 @@ def font(size: int, mono: bool = False):
 
 
 # ------------------------------------------------------------------ background
+# The landscape never moves in 3D: the camera is a crop of one painted plate.
+# Panning + a slow push-in used to mean a fresh 1280x720 resample every frame
+# (11 ms of the 38 ms it took to build a frame). Instead the plate is scaled to
+# every zoom level once, at startup, with the vignette already baked in, and a
+# frame is then an integer crop, blended with the neighbouring level by the
+# fraction of a step it sits between. The blend is what keeps the push-in from
+# stepping; it softens the frame by under a quarter of a pixel, measured.
+BG_PAD_X, BG_PAD_Y = 20, 11          # how far the camera may pan
+ZOOM_LEVELS = 65                     # 0.6 px of scale between neighbours: the
+#                                      blend that hides the stepping costs 0.2 px
+#                                      of sharpness, measured, not assumed
 _bg_cache: dict = {}
 
 
-def background() -> Image.Image:
-    if "img" not in _bg_cache:
-        im = Image.open(BG_PATH).convert("RGB")
-        if im.size != (BG_W, BG_H):
-            im = im.resize((BG_W, BG_H), Image.LANCZOS)
-        _bg_cache["img"] = im.resize(BG_SCALED, Image.LANCZOS)
-    return _bg_cache["img"]
+def _build_backgrounds(w: int, h: int, zmin: float, zmax: float):
+    """One pre-scaled landscape plate per zoom level, vignette baked in.
+
+    Each plate is the output size plus the pan margin, so a finished frame is an
+    integer crop from one or two of them and nothing is resampled per frame.
+    """
+    from PIL import Image as _I
+    k = w / DESIGN_W
+    src = Image.open(BG_PATH).convert("RGB")
+    if src.size != (BG_W, BG_H):
+        src = src.resize((BG_W, BG_H), _I.LANCZOS)
+    src = src.resize((int(round(BG_SCALED[0] * k)), int(round(BG_SCALED[1] * k))),
+                     _I.LANCZOS)
+    # the plate is the padded landscape; the pan margin is whatever is left
+    pw, ph = src.size
+    padx = max(1, (pw - w) // 2)
+    pady = max(1, (ph - h) // 2)
+
+    vig = vignette()
+    if vig.size != (w, h):
+        vig = vig.resize((w, h), _I.BILINEAR)
+    vig_rgb, vig_mask = vig.convert("RGB"), vig.split()[3]
+
+    plates = []
+    for i in range(ZOOM_LEVELS):
+        z = zmin + (zmax - zmin) * (i / (ZOOM_LEVELS - 1))
+        sw, sh = pw / z, ph / z
+        cx, cy = src.width * 0.5, src.height * 0.5
+        plate = src.resize((pw, ph), _I.BILINEAR,
+                           box=(cx - sw / 2, cy - sh / 2, cx + sw / 2, cy + sh / 2))
+        # the vignette is baked in at the nominal framing, so most frames get it
+        # for free; the camera can drag it by at most the pan margin (20x11 px),
+        # which on a gradient this soft moves the alpha by ~2/255
+        plate.paste(vig_rgb, (padx, pady), vig_mask)
+        plates.append(plate)
+    return plates, padx, pady
+
+
+def background(zoom: float, w: int, h: int, zmin: float, zmax: float):
+    """The two plates straddling `zoom`, plus the blend weight between them."""
+    key = (w, h, zmin, zmax)
+    if _bg_cache.get("key") != key:
+        _bg_cache["plates"], _bg_cache["padx"], _bg_cache["pady"] = \
+            _build_backgrounds(w, h, zmin, zmax)
+        _bg_cache["key"] = key
+    plates = _bg_cache["plates"]
+    f = (zoom - zmin) / max(zmax - zmin, 1e-6) * (ZOOM_LEVELS - 1)
+    f = min(max(f, 0.0), ZOOM_LEVELS - 1.0)
+    k = int(f)
+    k2 = min(k + 1, ZOOM_LEVELS - 1)
+    return plates[k], plates[k2], f - k
 
 
 def vignette() -> Image.Image:
@@ -116,31 +172,61 @@ def shake_at(impacts, t: float):
 def draw_background(cv: Canvas, t: float, scene) -> None:
     dx, dy, zoom = camera_at(scene["camera"], t)
     sx, sy = shake_at(scene["impacts"], t)
-    # the crop window: 40 px of horizontal travel, 22 px vertical, from the shake
-    ox = int(round(min(40.0, max(0.0, 20.0 + dx + sx))))
-    oy = int(round(min(22.0, max(0.0, 11.0 + dy + sy))))
-    bg = background().crop((ox, oy, ox + DESIGN_W, oy + DESIGN_H))
-    if abs(zoom - 1.0) > 1e-4:
-        zw = int(DESIGN_W * zoom)
-        zh = int(DESIGN_H * zoom)
-        bg = bg.resize((zw, zh), Image.BILINEAR)
-        left = (zw - DESIGN_W) // 2
-        top = (zh - DESIGN_H) // 2
-        bg = bg.crop((left, top, left + DESIGN_W, top + DESIGN_H))
-    cv.img.paste(bg, (0, 0))
-    cv.img.paste(vignette(), (0, 0), vignette())
+    zs = [k[3] for k in scene["camera"]]
+    p1, p2, a = background(zoom, cv.w, cv.h, min(zs), max(zs))
+    padx, pady = _bg_cache["padx"], _bg_cache["pady"]
+    k = cv.w / DESIGN_W
+    ox = int(round(min(2 * padx, max(0.0, padx + (dx + sx) * k))))
+    oy = int(round(min(2 * pady, max(0.0, pady + (dy + sy) * k))))
+    bg = p1.crop((ox, oy, ox + cv.w, oy + cv.h))
+    if a > 0.002:
+        bg = Image.blend(bg, p2.crop((ox, oy, ox + cv.w, oy + cv.h)), a)
+    # a crop is already an independent image, so it becomes the frame outright
+    # instead of being copied into a fresh canvas (+1 ms/frame)
+    cv.img = bg
+    cv.d = ImageDraw.Draw(bg)
+    cv._draw = None
 
 
-def overlay(cv: Canvas):
-    layer = Image.new("RGBA", (cv.w, cv.h), (0, 0, 0, 0))
-    return layer, ImageDraw.Draw(layer)
+class Overlay:
+    """A batch of translucent shapes drawn into one small patch.
 
+    Compositing a full 1280x720 layer costs ~8 ms; the shadows under two
+    fighters and the dust of a landing only cover a few hundred pixels wide
+    band, so the patch is a bounding box and the composite is one small paste.
+    """
 
-def composite(cv: Canvas, layer: Image.Image) -> None:
-    """One alpha composite for a whole batch of translucent shapes."""
-    cv.flush()
-    cv.img = Image.alpha_composite(cv.img.convert("RGBA"), layer).convert("RGB")
-    cv.d = ImageDraw.Draw(cv.img)
+    def __init__(self, cv: Canvas, box):
+        x0, y0, x1, y1 = box
+        x0 = max(0, int(math.floor(x0)))
+        y0 = max(0, int(math.floor(y0)))
+        x1 = min(cv.w, int(math.ceil(x1)))
+        y1 = min(cv.h, int(math.ceil(y1)))
+        if x1 - x0 < 1 or y1 - y0 < 1:
+            self.layer = None
+            return
+        self.cv, self.ox, self.oy = cv, x0, y0
+        self.box = (x0, y0, x1, y1)
+        self.layer = Image.new("RGBA", (x1 - x0, y1 - y0), (0, 0, 0, 0))
+        self.d = ImageDraw.Draw(self.layer)
+
+    def ellipse(self, box, fill):
+        if self.layer is None:
+            return
+        x0, y0, x1, y1 = box
+        self.d.ellipse([x0 - self.ox, y0 - self.oy, x1 - self.ox, y1 - self.oy],
+                       fill=fill)
+
+    def flush(self):
+        if self.layer is None:
+            return
+        cv = self.cv
+        cv.flush()
+        region = cv.img.crop(self.box).convert("RGBA")
+        out = Image.alpha_composite(region, self.layer)
+        cv.img.paste(out.convert("RGB"), self.box[:2])
+        cv.d = ImageDraw.Draw(cv.img)
+        self.layer = None
 
 
 _scene_cache = {}
@@ -153,18 +239,20 @@ def scene():
     return _scene_cache["s"]
 
 
-def shadow(d: ImageDraw.ImageDraw, cv: Canvas, sk, lift: float) -> None:
-    """A flat contact shadow: wide and faint under an airborne fighter."""
+def shadow_box(cv: Canvas, sk, lift: float):
+    """Where the contact shadow of one fighter sits, in screen pixels."""
     fx = (sk.pts[8][0] + sk.pts[10][0]) * 0.5
     c = cv.wp((fx, GROUND - 2))
     rx = (78.0 + 26.0 * lift) * cv.unit() * sk.scale
     ry = rx * (0.17 - 0.04 * min(lift, 1.0))
+    return (c[0] - rx, c[1] - ry, c[0] + rx, c[1] + ry)
+
+
+def shadow(ov: "Overlay", sk, lift: float) -> None:
+    """A flat contact shadow: wide and faint under an airborne fighter."""
     alpha = int(max(16, 76 - 40 * lift))
-    d.ellipse([c[0] - rx, c[1] - ry, c[0] + rx, c[1] + ry], fill=(20, 16, 14, alpha))
+    ov.ellipse(shadow_box(ov.cv, sk, lift), fill=(20, 16, 14, alpha))
 
-
-# the renderer sets this to the current frame's shadow overlay
-SHADOW_LAYER: list = [None]
 
 # how a body is assembled: each chain is a smooth tube, not a row of segments
 CHAINS = (
@@ -324,15 +412,14 @@ def draw_impacts(cv: Canvas, impacts, t: float, overlay_flash: list) -> None:
                         alpha=int(200 * (1 - k)))
 
 
-def draw_dust(d: ImageDraw.ImageDraw, cv: Canvas, dusts, t: float) -> None:
-    u = cv.unit()
+def dust_particles(dusts, t: float, u: float, cx: float, cy: float):
+    """Yield (ellipse box, alpha) for every live dust particle."""
     for t0 in dusts:
         age = t - t0
         if not (0.0 <= age < 0.75):
             continue
         k = age / 0.75
         rng = np.random.default_rng(int(t0 * 1000) % 7919)
-        cx, cy = cv.wp((DESIGN_W * 0.5, GROUND))
         for i in range(14):
             side = -1 if i % 2 else 1
             spd = rng.uniform(0.45, 1.3)
@@ -340,33 +427,64 @@ def draw_dust(d: ImageDraw.ImageDraw, cv: Canvas, dusts, t: float) -> None:
             py = cy - (2 + 24 * k * rng.uniform(0.2, 1.0)) * u
             rr = (9 + 20 * k) * u * rng.uniform(0.6, 1.2)
             alpha = int(52 * (1 - k) ** 2.1)
-            d.ellipse([px - rr, py - rr * 0.42, px + rr, py + rr * 0.42],
-                      fill=(212, 202, 184, alpha))
+            yield (px - rr, py - rr * 0.42, px + rr, py + rr * 0.42), alpha
+
+
+def draw_dust(dusts, t: float, u: float, cx: float, cy: float, cv) -> None:
+    particles = list(dust_particles(dusts, t, u, cx, cy))
+    if not particles:
+        return
+    x0 = min(q[0][0] for q in particles)
+    y0 = min(q[0][1] for q in particles)
+    x1 = max(q[0][2] for q in particles)
+    y1 = max(q[0][3] for q in particles)
+    ov = Overlay(cv, (x0 - 2, y0 - 2, x1 + 2, y1 + 2))
+    for box, alpha in particles:
+        ov.ellipse(box, fill=(212, 202, 184, alpha))
+    ov.flush()
 
 
 # ------------------------------------------------------------------------- HUD
+_hc_cache: dict = {}
+
+
 def health_curve(scene, who: str, t: float) -> float:
-    """Health at t: damage applied per impact, approached over 0.32 s."""
+    """Health at t: damage applied per impact, approached over 0.32 s.
+
+    The curve is a first-order lag integrated at 1/120 s from the start of the
+    clip, so a frame-by-frame render used to re-integrate from zero twice per
+    frame. The integrator keeps its state between calls instead: the numbers are
+    bit-identical (same accumulation, same order), it just stops doing the work
+    twice.
+    """
     key = "dmg_red" if who == "red" else "dmg_blue"
-    v = 100.0
-    sm = 100.0
+    st = _hc_cache.get(who)
+    if st is None or t < st["tt"] - 1e-9:
+        st = _hc_cache[who] = {"tt": 0.0, "sm": 100.0, "v": 100.0, "idx": 0,
+                               "key": key, "who": who,
+                               "hits": sorted(scene["impacts"], key=lambda e: e["t"])}
+        if t <= 0.0:
+            return 100.0
     step = 1.0 / 120.0
-    tt = 0.0
-    idx = 0
-    hits = sorted(scene["impacts"], key=lambda e: e["t"])
-    while tt < t:
-        while idx < len(hits) and hits[idx]["t"] <= tt:
-            v = max(0.0, v - hits[idx].get(key, 0.0))
-            idx += 1
+    hits = st["hits"]
+    while st["tt"] < t:
+        while st["idx"] < len(hits) and hits[st["idx"]]["t"] <= st["tt"]:
+            st["v"] = max(0.0, st["v"] - hits[st["idx"]].get(key, 0.0))
+            st["idx"] += 1
         k = 1.0 - math.exp(-step / 0.11)
-        sm += (v - sm) * k
-        tt += step
-    return max(0.0, sm)
+        st["sm"] += (st["v"] - st["sm"]) * k
+        st["tt"] += step
+    return max(0.0, st["sm"])
 
 
 def draw_text(cv: Canvas, text: str, xy, size: int, fill, alpha=255, anchor="mm",
               mono=False, spacing=0):
+    """Type is authored at 1280x720 and scaled with the frame, so a 540p preview
+    has the same layout instead of running off the edge."""
     d = ImageDraw.Draw(cv.img)
+    k = cv.w / DESIGN_W
+    size = max(6, int(round(size * k)))
+    spacing = int(round(spacing * k))
     f = font(size, mono)
     if spacing:
         # letterspaced title
@@ -458,18 +576,23 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
     draw_background(cv, t, scene)
 
     # far fighter first: the one further from the centre of action
+    heads = {tr.name: tr.skel(t) for tr in (scene["red"], scene["blue"])}
     order = sorted((scene["red"], scene["blue"]),
-                   key=lambda tr: -abs(tr.skel(t).head[0] - 640))
+                   key=lambda tr: -abs(heads[tr.name].head[0] - 640))
 
-    # contact shadows in one translucent pass under everything
-    shadow_layer, shadow_d = overlay(cv)
-    SHADOW_LAYER[0] = shadow_d
+    # contact shadows in one translucent pass, inside the band they occupy
+    boxes = []
+    lifts = {}
     for tr in order:
-        pose = tr.pose_at(t)
-        sk = solve(pose)
+        sk = heads[tr.name]
         feet_y = max(sk.pts[8][1], sk.pts[10][1])
-        shadow(shadow_d, cv, sk, max(0.0, GROUND - feet_y) / 90.0)
-    composite(cv, shadow_layer)
+        lifts[tr.name] = max(0.0, GROUND - feet_y) / 90.0
+        boxes.append(shadow_box(cv, sk, lifts[tr.name]))
+    ov = Overlay(cv, (min(b[0] for b in boxes), min(b[1] for b in boxes),
+                      max(b[2] for b in boxes), max(b[3] for b in boxes)))
+    for tr in order:
+        shadow(ov, heads[tr.name], lifts[tr.name])
+    ov.flush()
 
     for tr in order:
         trails(cv, tr, t)
@@ -477,9 +600,7 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
         draw_fighter(cv, tr, t)
     cv.flush()
 
-    dust_layer, dust_d = overlay(cv)
-    draw_dust(dust_d, cv, scene["dust"], t)
-    composite(cv, dust_layer)
+    draw_dust(scene["dust"], t, cv.unit(), *cv.wp((DESIGN_W * 0.5, GROUND)), cv)
 
     flash = []
     draw_impacts(cv, scene["impacts"], t, flash)
@@ -748,16 +869,48 @@ def write_wav(path, stereo):
 
 
 # ---------------------------------------------------------------------- render
-def _frame_bytes(args):
-    idx, t, w, h = args
-    img = render_frame(t, scene(), w, h)
-    return idx, img.tobytes()
+def _x264(w: int, h: int, preset: str, crf: int, tune: str, threads: int, out: str):
+    """The encoder every chunk drives with its own raw-RGB pipe."""
+    import imageio_ffmpeg
+    args = ["-c:v", "libx264", "-preset", preset, "-crf", str(crf)]
+    if tune:
+        args += ["-tune", tune]
+    if threads:
+        args += ["-threads", str(threads)]
+    return subprocess.Popen(
+        [imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-f", "rawvideo", "-pix_fmt", "rgb24",
+         "-s", f"{w}x{h}", "-framerate", str(FPS), "-i", "-", *args,
+         "-pix_fmt", "yuv420p", "-movflags", "+faststart", out, "-loglevel", "error"],
+        stdin=subprocess.PIPE)
+
+
+def _render_chunk(job):
+    """Draw a contiguous run of frames and encode it in the same process.
+
+    Frames never cross a pipe: the worker owns one segment and one encoder, so
+    the parent does no per-frame copying and every core is busy with either
+    pixels or x264 the whole time.
+    """
+    (n0, n1, w, h, preset, crf, tune, threads), path = job
+    sc = scene()
+    proc = _x264(w, h, preset, crf, tune, threads, path)
+    for i in range(n0, n1):
+        proc.stdin.write(render_frame(i / FPS, sc, w, h).tobytes())
+    proc.stdin.close()
+    proc.wait()
+    return path
+
+
+def _write_audio(wav_path: str, seconds: float) -> None:
+    write_wav(wav_path, synth_audio(scene(), seconds))
 
 
 def render(out_path: str, w: int = DESIGN_W, h: int = DESIGN_H, workers: int = 2,
-           audio: bool = True, start: float = 0.0, end: float = DURATION) -> None:
+           audio: bool = True, start: float = 0.0, end: float = DURATION,
+           preset: str = "veryfast", crf: int = 16,
+           tune: str = "animation") -> None:
+    from multiprocessing import Pool, Process
     import imageio_ffmpeg
-    from multiprocessing import Pool
 
     ff = imageio_ffmpeg.get_ffmpeg_exe()
     n0, n1 = int(round(start * FPS)), int(round(end * FPS))
@@ -767,34 +920,48 @@ def render(out_path: str, w: int = DESIGN_W, h: int = DESIGN_H, workers: int = 2
     tmp = os.path.join(os.path.dirname(out_path) or ".", "tmp")
     os.makedirs(tmp, exist_ok=True)
     silent = os.path.join(tmp, "_silent.mp4")
+    wav = os.path.join(tmp, "_audio.wav")
 
-    # frames go straight into FFmpeg as raw RGB: no PNG dump, no disk churn
-    proc = subprocess.Popen(
-        [ff, "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}",
-         "-framerate", str(FPS), "-i", "-", "-c:v", "libx264", "-preset", "slow",
-         "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart", silent,
-         "-loglevel", "error"],
-        stdin=subprocess.PIPE)
-    jobs = [(i, i / FPS, w, h) for i in range(n0, n1)]
-    got = 0
+    # the soundtrack is pure numpy and takes ~2 s: run it in its own process
+    # while the others draw frames, instead of after them
+    ap = None
+    if audio:
+        ap = Process(target=_write_audio, args=(wav, total / FPS), daemon=True)
+        ap.start()
+
+    # one segment per worker: render + encode together, then join the segments
+    threads = 1 if workers > 1 else 0
+    bounds = [n0 + round(total * k / workers) for k in range(workers + 1)]
+    jobs = [((bounds[k], bounds[k + 1], w, h, preset, crf, tune, threads),
+             os.path.join(tmp, f"_seg{k}.mp4")) for k in range(workers)]
+    t0 = time.time()
     with Pool(workers) as pool:
-        for _idx, buf in pool.imap(_frame_bytes, jobs, chunksize=3):
-            proc.stdin.write(buf)
-            got += 1
-            if got % 60 == 0 or got == total:
-                print(f"  {got}/{total}", flush=True)
-    proc.stdin.close()
-    proc.wait()
+        segs = [r.get() for r in [pool.apply_async(_render_chunk, (j,)) for j in jobs]]
+        for k, p in enumerate(segs):
+            print(f"  segment {k + 1}/{workers} done in {time.time() - t0:.1f}s", flush=True)
+
+    if len(segs) > 1:
+        listing = os.path.join(tmp, "_segs.txt")
+        with open(listing, "w") as fh:
+            for p in segs:
+                fh.write(f"file '{os.path.abspath(p)}'\n")
+        subprocess.run([ff, "-y", "-f", "concat", "-safe", "0", "-i", listing,
+                        "-c", "copy", "-movflags", "+faststart", silent,
+                        "-loglevel", "error"], check=True)
+    else:
+        os.replace(segs[0], silent)
 
     if audio:
-        wav = os.path.join(tmp, "_audio.wav")
-        write_wav(wav, synth_audio(scene(), (n1 - n0) / FPS))
+        ap.join()
         subprocess.run([ff, "-y", "-i", silent, "-i", wav, "-c:v", "copy",
                         "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
                         "-shortest", out_path, "-loglevel", "error"], check=True)
         os.remove(wav)
     else:
         os.replace(silent, out_path)
+    for p in segs:
+        if os.path.exists(p):
+            os.remove(p)
     if os.path.exists(silent):
         os.remove(silent)
     print(f"[done] {out_path}", flush=True)
@@ -812,6 +979,7 @@ def storyboard(times, out_path: str, w: int = DESIGN_W, h: int = DESIGN_H,
     for i, (t, im) in enumerate(zip(times, frames)):
         x, y = (i % cols) * tw, (i // cols) * th
         sheet.paste(im.resize((tw, th), Image.LANCZOS), (x, y))
-        d.text((x + 6, y + 4), f"{t:.2f}s", font=f, fill=(255, 240, 200))
+        # bottom-left: the top corners belong to the health bars and the timer
+        d.text((x + 6, y + th - 18), f"{t:.2f}s", font=f, fill=(255, 240, 200))
     sheet.save(out_path, quality=92)
     print(f"[storyboard] {out_path} ({len(times)} moments)", flush=True)
