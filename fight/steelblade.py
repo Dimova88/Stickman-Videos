@@ -128,6 +128,23 @@ def slash_arc(cv, samples, length: float, power: float = 1.0,
     if power <= 0.30 or len(samples) < 3:
         return
     u = cv.unit()
+    # Only the last part of the swing is *visible* air; the rest of a 120° snap
+    # happened between exposures. Clamp the ribbon to 50° of arc, interpolating
+    # the cut sample, so a fast cut reads as a sharp crescent and never as a
+    # painted fan across half the sky.
+    span = 0.85
+    end_a = samples[-1][1]
+    keep = [samples[-1]]
+    for j in range(len(samples) - 2, -1, -1):
+        w, a = samples[j]
+        d = (end_a - a + math.pi) % math.tau - math.pi
+        if abs(d) <= span:
+            keep.append(samples[j])
+        else:
+            k = span / abs(d)
+            keep.append((w, end_a - math.copysign(span, d)))
+            break
+    samples = list(reversed(keep))
     n = len(samples) - 1
     outer = [cv.wp(tip_of(w, a, length)) for w, a in samples]
     # the band is fat at the leading edge and thins to a whisker at the tail,

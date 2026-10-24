@@ -69,7 +69,7 @@ SHOTS = (
          dof=0.30, style="whip", ground=0.74, zoom_hit=0.06),
     dict(t0=9.55, t1=12.75, anchor="action", zoom=1.12, z1=1.20, follow=1.0,
          dof=0.10, style="cut", ground=0.79),
-    # the clash of fists at 13.44 gets its own push, then the insert cuts in
+    # the clash of fists at 13.44 gets its own push
     # over the shoulder: you are standing behind red, watching blue come in
     dict(t0=12.75, t1=13.44, anchor="action", zoom=1.32, follow=1.0,
          dof=0.34, style="cut", ground=0.78, zoom_hit=0.10),
@@ -109,7 +109,7 @@ SHOTS = (
     # a fist at the lens, then the blow lands
     dict(t0=24.40, t1=24.72, anchor="rush", rush="blue", zoom=1.18, z1=1.70,
          follow=1.0, dof=0.0, style="cut", fg=0.25, zoom_hit=0.10),
-    # the finisher, then its insert
+    # the finisher
     dict(t0=24.72, t1=25.24, anchor="action", zoom=1.26, follow=1.0,
          dof=0.20, style="cut", ground=0.76, zoom_hit=0.16),
     # the pull-back: the winner, and the body on the floor

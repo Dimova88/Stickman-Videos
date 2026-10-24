@@ -17,6 +17,13 @@ script — no editor, no timeline clicking, no stock assets.
 | [`renders/fight_1080p.mp4`](renders/fight_1080p.mp4) | the earlier clean-background 1080p fight (no HUD) |
 
 
+## Working on it
+
+The rules of the house — the prohibitions, the six pillars of a readable hit,
+and the pre-render checklist — live in **[AGENT_INSTRUCTIONS.md](AGENT_INSTRUCTIONS.md)**.
+Read that before changing a pose, a camera key or a line of the renderer.
+
+
 ## What this is
 
 The figures, their proportions, the angle convention and the drawing rules are
@@ -74,7 +81,8 @@ python3 -m venv .venv
 | `fight/steel.py` | **One Blade, Three Men**: four tracks, parries, blade locks, the cuts, 17 shots |
 | `fight/steelblade.py` | the katana's geometry, the slash trail and the sparks — all in design units |
 | `fight/blur.py` | the shutter: frame averaging along the camera's own velocity |
-| `fight/vfx.py` | earth, air, blood, impact frames, bloom |
+| `fight/vfx.py` | earth, air, blood, the two-frame ink hit, bloom |
+| `fight/insert.py` | *(removed)* the drawn face close-up — a human face built from primitives always read as programmer art |
 | `fight/sound.py` | the whole soundtrack: foley, taiko score, rock, mix |
 | `tools/audio_report.py` | levels per section, spectra, waveform + spectrogram |
 | `tools/remux_audio.py` | swap a master's soundtrack without re-rendering pixels |
@@ -335,39 +343,27 @@ joint position.
 | splayed claw for every hand | fist when the pose grips, open hand otherwise |
 | smear fan from the hip | fan from the knee or elbow, and none near the floor |
 
-### The close-up register
+### The impact register
 
-A stickman reads a fight at a distance; a body blow at full speed does not. So
-the film cuts — **on the exact frame the blow lands**, not near it — and for half
-a second the simple figure is gone: a face, or on the finisher the skull
-(`fight/insert.py`).
+A stickman reads a fight at a distance; a body blow at full speed does not. The
+film used to cut away for half a second to a close-up of a face drawn out of
+primitives. That is gone: a human face built from an ellipse, a nose wedge and
+two lines always reads as programmer art, and at 16.9 s it was producing a pair
+of googly eyes in the middle of the best hit in the film.
 
-| cut | at | what it shows |
-| --- | --- | --- |
-| face | 13.44 s | red at the fist clash, jaw clenched, teeth bared |
-| face | 18.40 s | blue takes red's aerial kick on the head: eyes wide, mouth open, sweat thrown off |
-| X-ray | 24.72 s | red eats the finisher: skull in bone, the crack opening, a red bloom at the point of impact |
+What stops the picture instead is the **ink frame** (`fight/vfx.py`): two frames,
+the real bodies drawn through the real camera with their colours swapped — white
+silhouettes on black, then the same drawing inverted — with radial needles thrown
+off the contact point. Nothing is re-posed, so it cannot drift out of step with
+the fight, and because it is the actual bodies it never looks like a sticker.
 
-The cut begins on the impact frame itself, so the blow and the close-up are the
-same instant. Everything inside it is in slow motion: the head is thrown to full
-recoil on the first frame, **holds** there while the camera pushes in, and only
-then settles. The music ducks away entirely under the hold, so the hit is the
-only thing left in the room.
-
-The face is built from proportions, not detail: eyes on the vertical centre one
-eye apart, tall almonds with a heavy upper lash, amber iris with a dark rim,
-brows riding down toward the nose, mouth low, chin tapered, jaw shadow on the
-neck. The first version shaded the head with soft polygons and read as an
-amorphous blob; there is now exactly one shadow plane and it is under the jaw.
-
-The X-ray draws the same head as bone — cranium, orbits, nasal aperture,
-zygomatic arch, a row of teeth, a mandible hung under the maxilla, cervical
-bodies running off the bottom of the frame — and a hairline crack that opens from
-the point of impact.
-
-**The sound.** A close-up gets its own blow — a boom, a long steel ring and a
-breath — and the score is out entirely underneath it, so the slow motion sounds
-like slow motion instead of like a bar of music with the picture changed.
+**Why it was removed.** Three close-ups shipped: red at 13.44 s, blue taking the
+aerial kick at 18.40 s, and an X-ray of the skull at 24.72 s. The X-ray was the
+best of them and still did not belong in a film about bodies moving; the other
+two read as a cartoon face pasted onto an action beat. They are deleted rather
+than tuned. The ink frame does the same job — stop the world, make the blow the
+only thing in the room — out of the bodies the audience has been watching for
+twenty seconds.
 
 ### The blow has weight: hitstop, compression, anticipation (*fight/impact.py*)
 
@@ -473,7 +469,7 @@ about where to look.
 
 Framing is expressed as `ground` (where the floor line sits, 0.72 = low camera,
 0.80 = level) instead of a hard-coded height, so a shot reads the same at any
-zoom. 22 shots in 30 s, 4.5 s of them close-ups.
+zoom. 22 shots in 30 s.
 
 **Three angles that needed more than camera numbers:**
 
@@ -525,10 +521,12 @@ rides the animation clock, so it is frozen with the bodies during the hitstop.
   corners: the first version scattered rocks and pines along the bottom edge and
   the row of small dark bumps read as an audience sitting in the dark, which is
   the one thing that must never be in frame;
-* close-ups carry a `dof` value that blurs the plate into bokeh while the
+* close shots carry a `dof` value that blurs the plate into bokeh while the
   fighters stay sharp, because the lens is on them. It is done by blurring a
   sixth-size copy and blowing it back up: 2 ms instead of the 24 ms a Gaussian
-  on the full frame costs.
+  on the full frame costs. The blurred plate is *mixed* back by depth instead
+  of being swapped in at a threshold, so pulling focus is continuous and never
+  snaps from sharp to butter between two frames.
 
 ### Air, earth, steel and blood (*fight/vfx.py*)
 
@@ -626,7 +624,7 @@ holds it:
 Sixteen contacts — seven clashes, six landed hits, two blocks and the finish —
 plus eight parry keys and two blade locks arrange the 1 vs 3: the hero is pushed
 left, gives ground, is crowded by a second and a third man, locks blades at
-19.9 s, cuts one down at 16.9 s (an ink frame and a face insert) and finishes the
+19.9 s, cuts one down at 16.9 s (an ink frame) and finishes the
 last at 23.3 s. A man on the floor drops his sword — checked against the solved skeleton, not a flag — so
 nothing hangs in the air next to an invisible wrist.
 
@@ -745,9 +743,9 @@ so the setting stays put. Both are ~2.4–3.2 Mbps at 720p.
 
 30-second tests: the clean 1080p fight, then the Clash on two sets — mountain
 and desert — with the full HUD and soundtrack, both rendered in ~16 s, and the
-figures carrying a bowed spine, articulated feet and hands, a face and speed
-deformation, three close-up inserts on the heaviest impacts (one of them an
-X-ray of the skull), hitstop and compression on every contact, a coiled wind-up
+figures carrying a bowed spine, articulated feet and hands, speed deformation (no
+face — heads are silhouettes with optional glowing slits), no drawn close-ups,
+hitstop and compression on every contact, a coiled wind-up
 before every landed blow, knockdowns that fly, bounce, skid and climb back up,
 no HUD at all, craters, drag shadows, shockwaves, blood, two-frame ink impact
 frames and a gated bloom, feet that step and skid, a chained grapple (block → clinch →
@@ -761,6 +759,17 @@ trail sampled from the point's own path, sparks that bounce, blade locks, a
 1-vs-3 film on both sets (`steel_clash_720p.mp4`, `steel_desert_720p.mp4`,
 17 shots), a real directional shutter for the whip pans, and the four art pieces
 exported to `assets/` so they outlive this film.
+
+The visual overhaul round is in as well. Heads are silhouettes — no nose, eye,
+brow or mouth on any frame — with a pair of angular slits that light up only when
+the fighter is actually swinging. The face close-ups are deleted, and the
+comic impact star is replaced by a hot bloom at the contact patch, irregular
+needles and falling debris, with steel-on-steel at a third of the flash so the
+two blades still read as an X inside the light. The knife crime of the first
+version was one of distance, not of drawing: three rivals spent the film
+shoulder to shoulder, so the two who are not attacking now stand in their own
+lanes, bodies on the floor hold a rigid low pose instead of melting into it, and
+the plate is mixed into bokeh by depth instead of snapping in at a threshold.
 
 The sound is no longer a loop: layered foley (whooshes tuned by limb weight,
 dirt footsteps read off the rig, flesh with sub drops, inharmonic steel, sonic

@@ -1,0 +1,12 @@
+# Cursor rules for Stickman-Videos
+
+Read AGENT_INSTRUCTIONS.md at the repository root before writing or changing any
+code that touches a frame.
+
+- The repo is Python (PIL, numpy). TypeScript/JS animation code pasted from a
+  ticket describes an *effect*; translate the constraint, never the file.
+- No faces on stickman heads, no drawn close-up faces, no comic stars, no
+  sine-wave limbs, no stacked idle enemies, no attacks while down.
+- Always commit and tag a restore point (`restore/<name>`) before a batch of
+  risky changes.
+- Verify with pixels and numbers before claiming a fix.

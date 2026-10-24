@@ -228,13 +228,17 @@ def draw_background(cv: Canvas, cam: dict, scene, w: int = DESIGN_W,
     # from above the painted landscape is not in shot at all: the floor is
     bg = background(bx, by, cam["zoom"], w, h,
                     ("high", scene["set"]) if cam.get("high") else scene["bg_path"])
-    if cam["dof"] > 0.02:
+    d = float(cam.get("dof", 0.0))
+    if d > 0.004:
         # bokeh the cheap way: blur a sixth-size copy and blow it back up. A
-        # Gaussian on the full frame costs 24 ms; this costs 2 and reads softer
+        # Gaussian on the full frame costs 24 ms; this costs 2 and reads softer.
+        # The blurred plate is then *mixed* back by depth rather than swapped in
+        # at a threshold: a shot that opens up pulls focus smoothly instead of
+        # snapping from sharp to butter between two frames.
         small = bg.resize((w // 6, h // 6), Image.BILINEAR)
-        r = 0.8 + 2.4 * cam["dof"]
-        bg = small.filter(ImageFilter.GaussianBlur(r)).resize(
+        small = small.filter(ImageFilter.GaussianBlur(0.5 + 3.2 * d)).resize(
             (w, h), Image.BICUBIC)
+        bg = Image.blend(bg, small, min(1.0, d * 5.0))
     cv.img = bg
     cv.d = ImageDraw.Draw(bg)
     cv._draw = None
@@ -566,16 +570,16 @@ def _head(cv: Canvas, c, r: float, facing: int, colour, dark, u: float,
     for side, scale in ((-1.0, 0.78), (1.0, 1.0)):
         ex = c[0] + fx * r * (0.30 + 0.13 * side) - fx * r * 0.06
         ey = c[1] - r * (0.05 + 0.05 * side)
-        w = r * 0.26 * scale * (0.75 + 0.25 * k)
-        h = r * 0.085 * scale * (1.0 - 0.35 * k)          # narrows as it burns
-        slant = fx * r * 0.09
+        w = r * 0.30 * scale * (0.72 + 0.28 * k)
+        h = r * 0.050 * scale * (1.0 - 0.30 * k)          # narrows as it burns
+        slant = fx * r * 0.17
         pts = [(ex - w * 0.5, ey + h * 0.5 + slant * 0.4),
                (ex - w * 0.15, ey - h * 0.5 - slant * 0.2),
                (ex + w * 0.5, ey - h * 0.5 - slant),
                (ex + w * 0.2, ey + h * 0.5)]
-        if k > 0.35:
-            cv.circle((ex, ey), w * 0.95, (255, 196, 120), width=0,
-                      fill=(255, 196, 120), alpha=int(30 + 70 * k))
+        if k > 0.30:
+            cv.circle((ex, ey), w * 1.15, (255, 206, 138), width=0,
+                      fill=(255, 206, 138), alpha=int(18 + 52 * k))
         cv.polygon(pts, (255, 246, 214), alpha=int(190 + 65 * k))
         cv.polygon([(p[0], p[1]) for p in pts[1:]] + [pts[0]],
                    (255, 226, 158), alpha=int(70 * k))
@@ -1232,7 +1236,7 @@ def synth_audio(scene, duration=DURATION) -> np.ndarray:
     """The soundtrack. Built in ``fight/sound.py``: foley, taiko score and mix.
 
     The audio is derived from the scene's own events — impacts, foot plants from
-    the solved rig, the close-up inserts, the K.O. card — so a fight that changes
+    the solved rig, the ink frames, the K.O. card — so a fight that changes
     changes its sound with it, and nothing has to be re-timed by hand.
     """
     from . import sound

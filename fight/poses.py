@@ -308,9 +308,13 @@ AERIAL_KICK = P(torso=-92, foot_l=(112, 72), foot_r=(-20, 44),
 FALL = P(torso=-52, hip=96, foot_l=(-26, 0), foot_r=(-58, 0),
          a_up=26, a_fore=-62, b_up=38, b_fore=-50, head=-12)
 
-# on the floor: hips low, torso along the ground, arms slack
-DOWN = P(torso=-8, hip=34, foot_l=(-100, 0), foot_r=(-122, 0),
-         a_up=18, a_fore=-64, b_up=4, b_fore=-38, head=-10)
+#: on the floor and staying there. The pelvis is 11 rig units up — the
+#: thickness of a lying body — and every limb is inside its own reach, so the
+#: pose cannot splay however long it is held. This is the pose a beaten fighter
+#: is *left* in, so it has to survive being on screen for six seconds.
+DOWN = P(torso=2, hip=11, foot_l=(-104, 2), foot_r=(-62, 6),
+         a_up=26, a_fore=-38, b_up=8, b_fore=-58, head=-6,
+         spine=3.0, toe_l=8.0, toe_r=4.0, grip_a=0.15, grip_b=0.15)
 
 # pushing back up off the floor
 RECOVER = P(torso=-62, hip=74, foot_l=(-20, 0), foot_r=(-66, 0),
@@ -338,9 +342,14 @@ BOUNCE = P(torso=-20, hip=36, foot_l=(-74, 12), foot_r=(-98, 20),
            a_up=-6, a_fore=6, b_up=16, b_fore=34, head=-24, air=15,
            spine=2.0, toe_l=14.0, toe_r=12.0, grip_a=0.2, grip_b=0.2)
 
-SPRAWL = P(torso=-4, hip=26, foot_l=(-112, 4), foot_r=(-44, 16),
-           a_up=-2, a_fore=12, b_up=24, b_fore=44, head=-8, air=0,
-           spine=-3.0, toe_l=8.0, toe_r=20.0, grip_a=0.25, grip_b=0.3)
+#: the body at rest on the floor: pelvis 10 rig units off the ground (that is
+#: the thickness of a lying torso), the spine flat, one knee up, hands open and
+#: slack. Every joint is inside its own reach, so nothing can splay: at this
+#: height the leg IK has 30 % of slack and the knee bend is fixed by the target,
+#: not by the solver's last resort.
+SPRAWL = P(torso=3, hip=11, foot_l=(-96, 1), foot_r=(-56, 7),
+           a_up=14, a_fore=-52, b_up=34, b_fore=26, head=-7, air=0,
+           spine=2.0, toe_l=6.0, toe_r=16.0, grip_a=0.2, grip_b=0.25)
 
 # the body comes back to itself: a roll onto the hip, then hands and knees
 ROLL = P(torso=-38, hip=46, foot_l=(-38, 8), foot_r=(-70, 22),
