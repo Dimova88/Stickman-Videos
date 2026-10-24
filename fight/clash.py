@@ -1,4 +1,4 @@
-"""Mountains Clash, 30 s test — choreography.
+"""Clash, 30 s test — choreography (one fight, several sets).
 
 Follows the process used for ``Mountain_Clash_Red_vs_Blue.mp4``:
 
@@ -28,6 +28,15 @@ DESIGN_W, DESIGN_H = 1280, 720
 GROUND = 590.0                     # y of the rock platform the fighters stand on
 FIG_SCALE = 1.30                   # 1.0 puts the pelvis 129 units above the floor
 STANCE = 1.75                      # stance width multiplier: a wide, planted base
+
+# The choreography is the same everywhere; only the set dressing and the words
+# change, so a new location is one entry here plus one painted plate.
+SETS = {
+    "mountain": {"title": "MOUNTAIN CLASH", "sub": "VICTORY ON THE SUMMIT",
+                 "hud": "MOUNTAIN  •  ROUND 1"},
+    "desert": {"title": "DESERT CLASH", "sub": "VICTORY IN THE DUNES",
+               "hud": "DESERT  •  ROUND 1"},
+}
 
 RED = (196, 58, 50)
 RED_DARK = (138, 36, 31)
@@ -103,7 +112,8 @@ class Track:
 
 
 # =========================================================== the choreography
-def build() -> dict:
+def build(set_name: str = "mountain") -> dict:
+    words = SETS.get(set_name, SETS["mountain"])
     red = Track("red", 1, RED, RED_DARK)
     blue = Track("blue", -1, BLUE, BLUE_DARK)
 
@@ -130,7 +140,7 @@ def build() -> dict:
     # ---------------------------------------------------------------- 0-2.4 intro
     red.key(0.0, I, 470)
     blue.key(0.0, I, 812)
-    title(0.35, 2.55, "MOUNTAIN CLASH", "title")
+    title(0.35, 2.55, words["title"], "title")
     title(0.95, 2.75, "RED  VS  BLUE", "sub")
 
     red.key(1.70, fade(G, torso=-82), 500)
@@ -353,8 +363,8 @@ def build() -> dict:
 
     title(24.90, 26.60, "K.O.", "ko")
     title(26.10, 29.20, "BLUE WINS", "title")
-    title(26.60, 29.30, "VICTORY ON THE SUMMIT", "sub")
-    title(0.0, 30.0, "MOUNTAIN  •  ROUND 1", "hud")
+    title(26.60, 29.30, words["sub"], "sub")
+    title(0.0, 30.0, words["hud"], "hud")
 
     # ---------------------------------------------------------------- spacing
     # the pair must never collapse into one blob: heads stay a fist-and-forearm
@@ -541,5 +551,5 @@ def build() -> dict:
               (16.6, 20.0, 2.0, 1.04), (21.5, 24.0, 1.0, 1.06),
               (25.4, 26.0, 0.0, 1.04), (30.0, 30.0, 2.0, 1.05)]
 
-    return {"red": red, "blue": blue, "impacts": impacts, "dust": dusts,
-            "texts": texts, "camera": camera}
+    return {"set": set_name, "red": red, "blue": blue, "impacts": impacts,
+            "dust": dusts, "texts": texts, "camera": camera}

@@ -24,7 +24,8 @@ from .draw import Canvas, Cam
 
 ASSETS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                       "assets")
-BG_PATH = os.path.join(ASSETS, "mountain_background.png")
+SET_FILES = {"mountain": "mountain_background.png",
+             "desert": "desert_background.png"}
 SR = 44100
 
 FONT_DIR = "/usr/share/fonts/truetype/dejavu"
@@ -63,7 +64,7 @@ ZOOM_LEVELS = 65                     # 0.6 px of scale between neighbours: the
 _bg_cache: dict = {}
 
 
-def _build_backgrounds(w: int, h: int, zmin: float, zmax: float):
+def _build_backgrounds(w: int, h: int, zmin: float, zmax: float, path: str):
     """One pre-scaled landscape plate per zoom level, vignette baked in.
 
     Each plate is the output size plus the pan margin, so a finished frame is an
@@ -71,7 +72,7 @@ def _build_backgrounds(w: int, h: int, zmin: float, zmax: float):
     """
     from PIL import Image as _I
     k = w / DESIGN_W
-    src = Image.open(BG_PATH).convert("RGB")
+    src = Image.open(path).convert("RGB")
     if src.size != (BG_W, BG_H):
         src = src.resize((BG_W, BG_H), _I.LANCZOS)
     src = src.resize((int(round(BG_SCALED[0] * k)), int(round(BG_SCALED[1] * k))),
@@ -101,12 +102,12 @@ def _build_backgrounds(w: int, h: int, zmin: float, zmax: float):
     return plates, padx, pady
 
 
-def background(zoom: float, w: int, h: int, zmin: float, zmax: float):
+def background(zoom: float, w: int, h: int, zmin: float, zmax: float, path: str):
     """The two plates straddling `zoom`, plus the blend weight between them."""
-    key = (w, h, zmin, zmax)
+    key = (w, h, zmin, zmax, path)
     if _bg_cache.get("key") != key:
         _bg_cache["plates"], _bg_cache["padx"], _bg_cache["pady"] = \
-            _build_backgrounds(w, h, zmin, zmax)
+            _build_backgrounds(w, h, zmin, zmax, path)
         _bg_cache["key"] = key
     plates = _bg_cache["plates"]
     f = (zoom - zmin) / max(zmax - zmin, 1e-6) * (ZOOM_LEVELS - 1)
@@ -173,7 +174,7 @@ def draw_background(cv: Canvas, t: float, scene) -> None:
     dx, dy, zoom = camera_at(scene["camera"], t)
     sx, sy = shake_at(scene["impacts"], t)
     zs = [k[3] for k in scene["camera"]]
-    p1, p2, a = background(zoom, cv.w, cv.h, min(zs), max(zs))
+    p1, p2, a = background(zoom, cv.w, cv.h, min(zs), max(zs), scene["bg_path"])
     padx, pady = _bg_cache["padx"], _bg_cache["pady"]
     k = cv.w / DESIGN_W
     ox = int(round(min(2 * padx, max(0.0, padx + (dx + sx) * k))))
@@ -232,11 +233,13 @@ class Overlay:
 _scene_cache = {}
 
 
-def scene():
-    """The choreography is deterministic: build it once per process."""
-    if "s" not in _scene_cache:
-        _scene_cache["s"] = build()
-    return _scene_cache["s"]
+def scene(set_name: str = "mountain"):
+    """The choreography is deterministic: build it once per process and set."""
+    if set_name not in _scene_cache:
+        sc = build(set_name)
+        sc["bg_path"] = os.path.join(ASSETS, SET_FILES.get(set_name, "mountain_background.png"))
+        _scene_cache[set_name] = sc
+    return _scene_cache[set_name]
 
 
 def shadow_box(cv: Canvas, sk, lift: float):
@@ -479,12 +482,7 @@ def health_curve(scene, who: str, t: float) -> float:
 
 def draw_text(cv: Canvas, text: str, xy, size: int, fill, alpha=255, anchor="mm",
               mono=False, spacing=0):
-    """Type is authored at 1280x720 and scaled with the frame, so a 540p preview
-    has the same layout instead of running off the edge."""
     d = ImageDraw.Draw(cv.img)
-    k = cv.w / DESIGN_W
-    size = max(6, int(round(size * k)))
-    spacing = int(round(spacing * k))
     f = font(size, mono)
     if spacing:
         # letterspaced title
@@ -571,8 +569,15 @@ def draw_hud(cv: Canvas, scene, t: float) -> None:
 
 # ----------------------------------------------------------------------- frame
 def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image.Image:
+    """One finished frame at design size, scaled down if a smaller size is asked.
+
+    The HUD is authored in design coordinates, so drawing natively at 640p used
+    to run the bars off the frame. Everything is now composed at 1280x720 and the
+    finished frame is resampled, which makes any smaller size a true preview of
+    the master instead of a second layout.
+    """
     cam = Cam(640.0, 360.0, 1.0)
-    cv = Canvas(w, h, cam)
+    cv = Canvas(DESIGN_W, DESIGN_H, cam)
     draw_background(cv, t, scene)
 
     # far fighter first: the one further from the centre of action
@@ -608,8 +613,9 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
 
     if flash:
         a = min(220, sum(flash))
-        cv.img.paste(Image.blend(cv.img, Image.new("RGB", (w, h), (255, 253, 246)),
-                                 a / 255.0), (0, 0))
+        cv.img.paste(Image.blend(cv.img, Image.new("RGB", (DESIGN_W, DESIGN_H),
+                                                   (255, 253, 246)), a / 255.0),
+                     (0, 0))
 
     draw_hud(cv, scene, t)
 
@@ -620,8 +626,11 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
     elif t > DURATION - 1.1:
         fade = (t - (DURATION - 1.1)) / 1.1
     if fade > 0.001:
-        cv.img.paste(Image.blend(cv.img, Image.new("RGB", (w, h), (6, 6, 8)),
-                                 min(1.0, fade) ** 1.15), (0, 0))
+        cv.img.paste(Image.blend(cv.img, Image.new("RGB", (DESIGN_W, DESIGN_H),
+                                                   (6, 6, 8)), min(1.0, fade) ** 1.15),
+                     (0, 0))
+    if (w, h) != (DESIGN_W, DESIGN_H):
+        return cv.img.resize((w, h), Image.LANCZOS)
     return cv.img
 
 
@@ -891,8 +900,8 @@ def _render_chunk(job):
     the parent does no per-frame copying and every core is busy with either
     pixels or x264 the whole time.
     """
-    (n0, n1, w, h, preset, crf, tune, threads), path = job
-    sc = scene()
+    (n0, n1, w, h, preset, crf, tune, threads, set_name), path = job
+    sc = scene(set_name)
     proc = _x264(w, h, preset, crf, tune, threads, path)
     for i in range(n0, n1):
         proc.stdin.write(render_frame(i / FPS, sc, w, h).tobytes())
@@ -901,21 +910,21 @@ def _render_chunk(job):
     return path
 
 
-def _write_audio(wav_path: str, seconds: float) -> None:
-    write_wav(wav_path, synth_audio(scene(), seconds))
+def _write_audio(wav_path: str, seconds: float, set_name: str) -> None:
+    write_wav(wav_path, synth_audio(scene(set_name), seconds))
 
 
 def render(out_path: str, w: int = DESIGN_W, h: int = DESIGN_H, workers: int = 2,
            audio: bool = True, start: float = 0.0, end: float = DURATION,
            preset: str = "veryfast", crf: int = 16,
-           tune: str = "animation") -> None:
+           tune: str = "animation", set_name: str = "mountain") -> None:
     from multiprocessing import Pool, Process
     import imageio_ffmpeg
 
     ff = imageio_ffmpeg.get_ffmpeg_exe()
     n0, n1 = int(round(start * FPS)), int(round(end * FPS))
     total = n1 - n0
-    print(f"[render] {total} frames at {w}x{h}", flush=True)
+    print(f"[render] {total} frames at {w}x{h} on the {set_name} set", flush=True)
 
     tmp = os.path.join(os.path.dirname(out_path) or ".", "tmp")
     os.makedirs(tmp, exist_ok=True)
@@ -926,13 +935,14 @@ def render(out_path: str, w: int = DESIGN_W, h: int = DESIGN_H, workers: int = 2
     # while the others draw frames, instead of after them
     ap = None
     if audio:
-        ap = Process(target=_write_audio, args=(wav, total / FPS), daemon=True)
+        ap = Process(target=_write_audio, args=(wav, total / FPS, set_name),
+                     daemon=True)
         ap.start()
 
     # one segment per worker: render + encode together, then join the segments
     threads = 1 if workers > 1 else 0
     bounds = [n0 + round(total * k / workers) for k in range(workers + 1)]
-    jobs = [((bounds[k], bounds[k + 1], w, h, preset, crf, tune, threads),
+    jobs = [((bounds[k], bounds[k + 1], w, h, preset, crf, tune, threads, set_name),
              os.path.join(tmp, f"_seg{k}.mp4")) for k in range(workers)]
     t0 = time.time()
     with Pool(workers) as pool:
@@ -968,8 +978,8 @@ def render(out_path: str, w: int = DESIGN_W, h: int = DESIGN_H, workers: int = 2
 
 
 def storyboard(times, out_path: str, w: int = DESIGN_W, h: int = DESIGN_H,
-               cols: int = 4) -> None:
-    sc = scene()
+               cols: int = 4, set_name: str = "mountain") -> None:
+    sc = scene(set_name)
     frames = [render_frame(t, sc, w, h) for t in times]
     tw, th = w // 3, h // 3
     rows = (len(frames) + cols - 1) // cols

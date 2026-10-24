@@ -110,11 +110,22 @@ The current version authors **body angles, not targets**:
 * Audio is synthesised (sub-thump impacts, swept-noise whooshes, a pulse bed) —
   no samples, so nothing to license.
 
-## Mountains Clash: how the 30 s test is built
+## The Clash: how the 30 s test is built
 
-The reference process, reimplemented end to end:
+The reference process, reimplemented end to end. The fight is location-agnostic:
+one choreography, one HUD, and a painted plate plus three title lines per set.
 
-1. **Background.** One 1376×768 painted plate is scaled to 1320×742, and the
+| set | plate | title / subtitle / HUD |
+| --- | --- | --- |
+| `mountain` | `assets/mountain_background.png` | MOUNTAIN CLASH / VICTORY ON THE SUMMIT / MOUNTAIN • ROUND 1 |
+| `desert` | `assets/desert_background.png` | DESERT CLASH / VICTORY IN THE DUNES / DESERT • ROUND 1 |
+
+```
+python tools/render_clash.py --out renders/mountain_clash_720p.mp4
+python tools/render_clash.py --set desert --out renders/desert_clash_720p.mp4
+```
+
+1. **Background.** One 1376×768 painted plate per set is scaled to 1320×742, and the
    push-in is pre-scaled once into 65 plates (one per zoom step, vignette baked
    in); each frame is then an integer crop of one — or a blend of the two
    neighbouring — plates, offset by a slow camera drift plus the impact shake.
@@ -237,11 +248,36 @@ Quality, measured:
   the normal frame-to-frame spread, so there is no seam.
 
 The same run now also fixes previews: `--w 960/640` used to show an upper-left
-crop of the 1280 background, and the HUD type did not scale with the frame, so
-the storyboard had its title running off the edge.
+crop of the 1280 background with the HUD type unchanged, so the storyboard had
+its title and health bars running off the frame. Frames are now always composed
+at 1280×720 and the finished frame is resampled, which makes a small size an
+exact preview of the master (`--w 960` differs from the downscaled master by 0
+levels) rather than a second layout.
+
+### A second set: the desert
+
+The same fight re-staged on a new plate (`--set desert`), with its own title
+card. Nothing in the renderer is mountain-specific — the plate, the pan range
+and the zoom range are all derived from the scene.
+
+| | mountain | desert |
+| --- | --- | --- |
+| frame (720p, one core) | 8.8 ms | 9.2 ms |
+| full render, 2 cores | 14.5 s | **14.6 s** |
+| encode, same settings | 10.0 s | 10.4 s |
+| master size | 9.10 MB | 12.00 MB |
+| per-frame PSNR vs lossless source | median 47.9 dB | median 46.9 dB |
+| SSIM vs lossless source | 0.981 | 0.976 |
+| soundtrack | — | bit-identical to the mountain master |
+
+The desert plate carries more fine detail (sand grain, rock strata, stars), so
+the same CRF spends 30 % more bits and lands ~1 dB lower — that is the content,
+not the pipeline: dropping to CRF 14 on the desert buys +0.05 dB for +33 % bytes,
+so the setting stays put. Both are ~2.4–3.2 Mbps at 720p.
 
 ## Status
 
-30-second tests, two of them: the clean 1080p fight, and Mountains Clash on the
-landscape set with the full HUD and soundtrack. Next: the one-minute version
-with the same pipeline, then longer choreography and more camera angles.
+30-second tests: the clean 1080p fight, then the Clash on two sets — mountain
+and desert — with the full HUD and soundtrack, both rendered in ~15 s. Next: the
+one-minute version with the same pipeline, then longer choreography and more
+camera angles.
