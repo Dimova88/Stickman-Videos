@@ -19,6 +19,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from .clash import (BLUE, BLUE_DARK, DESIGN_H, DESIGN_W, DURATION, FPS, GROUND,
                     INK, RED, RED_DARK, build)
+from .insert import cut_at, draw_insert
 from .core import SEG, SEGMENT_ORDER, solve
 from .draw import Canvas, Cam
 
@@ -837,7 +838,18 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
     """
     cam = Cam(640.0, 360.0, 1.0)
     cv = Canvas(DESIGN_W, DESIGN_H, cam)
-    draw_background(cv, t, scene)
+    cut = cut_at(t)
+    if cut is None:
+        draw_background(cv, t, scene)
+
+    if cut is not None:
+        # the close-up register: a cut, not a camera move, so no HUD shadows,
+        # no dust and no star burst — just the body and the light on it
+        draw_insert(cv, cut, scene)
+        draw_hud(cv, scene, t)
+        if (w, h) != (DESIGN_W, DESIGN_H):
+            return cv.img.resize((w, h), Image.LANCZOS)
+        return cv.img
 
     # far fighter first: the one further from the centre of action
     heads = {tr.name: tr.skel(t) for tr in (scene["red"], scene["blue"])}

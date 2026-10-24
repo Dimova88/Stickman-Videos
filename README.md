@@ -289,6 +289,37 @@ film measures
 untouched — and 32.4 dB overall, which is the fighters: every one of those
 levels is the new anatomy, not an artefact.
 
+### The close-up register
+
+A stickman reads a fight at a distance; a body blow at full speed does not. So
+the film now cuts: on the three heaviest impacts it leaves the wide shot for a
+fifth of a second and shows the face — and on the finisher, the skull
+(`fight/insert.py`).
+
+| cut | at | what it shows |
+| --- | --- | --- |
+| face | 9.56 s | blue takes red's uppercut: head snapped back, eyes wide, sweat thrown off the jaw |
+| face | 13.38 s | red at the fist clash, jaw set, brow down |
+| X-ray | 24.28 s | blue eats the finisher: the skull in bone, the fracture opening, a red bloom at the point of impact |
+
+In that register the figure is not a stickman any more. The head is a profile
+silhouette — brow ridge, nasion, nasal spine, maxilla, chin, jaw angle, occiput —
+with a white almond eye over a big amber iris, a heavy lid and a brow that slants
+down toward the nose. The neck carries the sterno-mastoid, the near shoulder a
+deltoid in light against the far one in shadow, and sweat leaves the jaw on every
+frame. Manga focus lines run from the head to the edge of frame, the camera
+pushes in across the cut, and the head snaps back off the blow and settles.
+
+The X-ray draws that same profile as bone: orbit, nasal aperture, zygomatic arch,
+a row of teeth, a mandible hung under the maxilla, cervical bodies running off the
+bottom of the frame, and a crack that opens with the impact.
+
+Verified the honest way: outside the three cuts the new master is **bit-identical**
+to the previous one — PSNR ∞ (zero difference) on every sampled frame outside
+them, 43 dB on the couple of frames the encoder's rate control nudges after a cut
+— and inside them it is a new shot by design. Soundtrack bit-identical, runtime
+and stream layout unchanged, render still 16–17 s.
+
 ### A second set: the desert
 
 The same fight re-staged on a new plate (`--set desert`), with its own title
@@ -315,6 +346,6 @@ so the setting stays put. Both are ~2.4–3.2 Mbps at 720p.
 30-second tests: the clean 1080p fight, then the Clash on two sets — mountain
 and desert — with the full HUD and soundtrack, both rendered in ~16 s, and the
 figures now carrying a bowed spine, articulated feet and hands, a face and
-speed deformation. Next: the close-up register — muscular anatomy, fingers and
-the Mortal-Kombat X-ray on the heaviest impacts — then the one-minute version
-with the same pipeline, and longer choreography with more camera angles.
+speed deformation, and three close-up inserts on the heaviest impacts — one of
+them an X-ray of the skull. Next: the one-minute version with the same pipeline,
+then longer choreography with more camera angles.
