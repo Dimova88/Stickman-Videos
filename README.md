@@ -47,6 +47,12 @@ python3 -m venv .venv
 # re-export the art as standalone transparent PNGs (assets/steel, assets/ink)
 .venv/bin/python tools/make_assets.py
 
+# look at the soundtrack: levels per section, spectra, spectrogram
+.venv/bin/python tools/audio_report.py --set steel-mountain
+
+# replace a master's audio without re-rendering the pixels
+.venv/bin/python tools/remux_audio.py renders/steel_clash_720p.mp4 --set steel-mountain
+
 # 12-moment storyboard, and a fast low-res slice while iterating
 .venv/bin/python tools/render_clash.py --storyboard 12 --w 960
 .venv/bin/python tools/render_clash.py --w 640 --start 18 --end 24 --out /tmp/slice.mp4
@@ -69,6 +75,9 @@ python3 -m venv .venv
 | `fight/steelblade.py` | the katana's geometry, the slash trail and the sparks — all in design units |
 | `fight/blur.py` | the shutter: frame averaging along the camera's own velocity |
 | `fight/vfx.py` | earth, air, blood, impact frames, bloom |
+| `fight/sound.py` | the whole soundtrack: foley, taiko score, rock, mix |
+| `tools/audio_report.py` | levels per section, spectra, waveform + spectrogram |
+| `tools/remux_audio.py` | swap a master's soundtrack without re-rendering pixels |
 | `tools/make_assets.py` | exports the sword, the crescent, the sparks and the ink as PNGs |
 | `fight/clashfilm.py` | the Mountains Clash renderer: landscape crop, trails, impacts, dust, HUD, procedural audio, FFmpeg pipe |
 | `tools/pose_sheet.py` | renders the whole pose library to one contact sheet — the tool used to check anatomy |
@@ -124,8 +133,9 @@ The current version authors **body angles, not targets**:
 * **Impacts are anchored to the body**, not to empty air: the star is placed on
   the head or torso the nearest limb is attacking, and on the meeting point of
   the fists for the two clashes.
-* Audio is synthesised (sub-thump impacts, swept-noise whooshes, a pulse bed) —
-  no samples, so nothing to license.
+* Audio is synthesised — foley, taiko and rock, all built from envelopes and
+  noise, no samples, so nothing to license. See *The soundtrack*
+  (`fight/sound.py`) below.
 
 ## The Clash: how the 30 s test is built
 
@@ -174,19 +184,11 @@ python tools/render_clash.py --set desert --out renders/desert_clash_720p.mp4
 7. **HUD.** Health bars (damage eased over 0.32 s), a timer, MOUNTAIN CLASH /
    RED VS BLUE / FIGHT! / DOWN! / K.O. / BLUE WINS / VICTORY ON THE SUMMIT,
    MOUNTAIN • ROUND 1, thin cinematic bars and fades.
-8. **Sound.** Fully synthesised at 44.1 kHz stereo, mixed in three layers so the
-   hits cut through:
-   * **hits** are built from the four parts a punch has — `body` (a
-     pitch-dropping thump, 70–150 Hz), `smack` (a 40 ms band-passed burst at
-     700–4200 Hz, the *pak* that makes it read as a fist rather than a door),
-     `flesh` (a longer noise tail) and `ring` (bone on bone, blocks and clashes
-     only). Every blow has its own noise seed, so the 29 hits are not clones.
-     Body shots sit at 82 Hz and are darker, the finisher at 68 Hz with a 1 s
-     tail;
-   * **the bed** (low pulse, kick on the half-second, snare on the off-beats,
-     hats on the sixteenths) is side-chained: every impact ducks it ~8 dB for a
-     moment, which is what makes a punch audible instead of buried;
-   * **movement** adds a swish before each strike, plus the sweeps.
+8. **Sound.** Fully synthesised at 44.1 kHz stereo, in three buses (music,
+   foley, hits) so the impacts cut through. The first version of this was one
+   looped drum and one dry impact for everything; it is now a layered score and
+   a foley pass — see *The soundtrack* (`fight/sound.py`) for how each sound is
+   built and how the music is shaped around the fight.
 
    Constant-power panning by screen position, and a C–E–G–C major rise after the
    win. Measured on the finished file: peak 0.95, RMS 0.12, and a 2–5x energy
@@ -363,11 +365,9 @@ zygomatic arch, a row of teeth, a mandible hung under the maxilla, cervical
 bodies running off the bottom of the frame — and a hairline crack that opens from
 the point of impact.
 
-**The sound.** A close-up gets its own blow (`critical_hit`): a sub that drops an
-octave, the crack of first contact, and a bone ring that hangs while the picture
-holds. Measured on the finished mix, the three close-ups sit ~6 dB (face) and
-~9 dB (X-ray) above an ordinary landed punch, and the music is 70 % down under
-each of them.
+**The sound.** A close-up gets its own blow — a boom, a long steel ring and a
+breath — and the score is out entirely underneath it, so the slow motion sounds
+like slow motion instead of like a bar of music with the picture changed.
 
 ### The blow has weight: hitstop, compression, anticipation (*fight/impact.py*)
 
@@ -646,6 +646,64 @@ jump in camera state (an anchor that changes target mid-shot) turns into a
 300 px smear on exactly the frame that must be crisp; the blade lock now cuts
 instead of whipping, and its anchor never changes.
 
+### The soundtrack (*fight/sound.py*)
+
+The first soundtrack was a metronome with a film on top: one looping drum, one
+dry impact for every contact, a chord at the end. The current one is built from
+three layers and it knows what is happening on screen, because it is derived
+from the same event list the pictures are.
+
+**Foley — one sound per thing that happens, each made of several layers.**
+
+| what | layers |
+| --- | --- |
+| whoosh | noise through a filter whose centre climbs across four bands, tuned by the weight of the limb — a jab is thin and quick, a kick is low and long, a katana adds a ringing 2.7/4.0/6.1 kHz edge on top |
+| footstep | a soft low thud, a gravel hiss, and three stone ticks at random offsets |
+| flesh hit | sub drop + pitch-dropping body + 40 ms skin crack + a longer meat tail, with a bone ring on blocks; body shots are darker, the finish is lower and longer |
+| steel clash | inharmonic partials at 1, 2.76, 5.40, 8.93 and 13.34 × 640 Hz, a 3–11 kHz sizzle, and a hard clank underneath |
+| blade lock | a friction hiss, two partials beating at 7.5 Hz and a low groan: a lock is not a hit, so it gets its own sound |
+| boom | the air pressure of the biggest hits, 1.4 s of it |
+| breath | a short non-verbal effort exhale — air, a formant and a little glottal buzz, no words |
+
+Footsteps are not scheduled by hand: the footwork module already decides when a
+foot lands, and `_foot_plants` finds the same events from the outside by looking
+for the low point of each foot in the solved rig. A step exists in the sound
+because it exists in the picture.
+
+**Music — a taiko kit and an instrumental rock layer, with a memory.** The drum
+is a skin that drops in pitch (plus a slap and a room); the rock is sawtooth
+power chords pushed through `tanh` and high-passed, with a bass an octave under.
+Every landing gets its own taiko accent, so the score plays the fight instead of
+a click track. The shape:
+
+| | |
+| --- | --- |
+| 0.0–2.1 | intro: three slow drums, a shime roll that tightens, a riser |
+| 2.1–8.1 | quarter-note taiko, rim on the off-beats, bass under the bar |
+| 8.1–16.9 | rock enters, taiko to eighths, shime on the sixteenths |
+| 16.9 | the score **stops** under the ink frame |
+| 17.3–19.4 | the tempo tightens to a roll, riser under it |
+| 19.4–20.4 | **silence**: only the two blades grinding |
+| 20.4–22.7 | double time, full riff, crash on the way in |
+| 22.7–23.3 | **silence** again: the breath before the last blow |
+| 23.3 | the blow, and everything at once |
+| 23.9–25.3 | aftermath: a slow drum and the room |
+| 25.3–30.2 | the key lifts to C major: detuned string pad, taiko phrase, shime roll |
+
+**Mix.** Every sound is panned to where it happened, hits side-chain the music by
+~8 dB, the metal and the booms go through one convolution reverb (a synthetic
+impulse: noise with four early reflections), and the master is tilted rather than
+clipped — a soft limiter, then a band tilt that keeps the drums from sitting on
+top of everything. Measured on the finished steel master: **crest 15.3 dB,
+0.01 % of samples at the ceiling, L/R within 1 dB, and the energy split 13 % /
+28 % / 22 % / 29 % / 8 % across 20–60, 60–120, 120–500, 500–2000 and 2–6 kHz.**
+The steel clash and the flesh hit are provably different sounds: their spectral
+centres of gravity are **4.85 kHz and 0.98 kHz**.
+
+`tools/audio_report.py` prints those numbers and draws `renders/audio_report.png`
+— waveform, log-frequency spectrogram and the section map — so a hole in the
+score is something you can see.
+
 ### The assets (*tools/make_assets.py*)
 
 Everything in the film is procedural, so the pieces can be exported on their own
@@ -702,5 +760,12 @@ The weapons round is in: a katana that is geometry rather than a sprite, a slash
 trail sampled from the point's own path, sparks that bounce, blade locks, a
 1-vs-3 film on both sets (`steel_clash_720p.mp4`, `steel_desert_720p.mp4`,
 17 shots), a real directional shutter for the whip pans, and the four art pieces
-exported to `assets/` so they outlive this film. Next: the first minute of the
-long film, with the blade vocabulary reused across sets.
+exported to `assets/` so they outlive this film.
+
+The sound is no longer a loop: layered foley (whooshes tuned by limb weight,
+dirt footsteps read off the rig, flesh with sub drops, inharmonic steel, sonic
+booms, non-verbal breath), a taiko-and-rock score that hits on every landing and
+**stops dead** for the blade lock and for the breath before the last blow, and a
+mix with panning, a convolution reverb, side-chain ducking and a limiter. Next:
+the first minute of the long film, with the blade vocabulary and this score
+engine reused across sets.

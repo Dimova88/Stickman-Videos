@@ -1227,275 +1227,15 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
 
 
 # ----------------------------------------------------------------------- audio
-def _env(n, attack, decay):
-    a = max(1, int(attack * SR))
-    e = np.ones(n, np.float32)
-    e[:a] = np.linspace(0, 1, a) ** 1.6
-    d = max(1, int(decay * SR))
-    if d < n:
-        e[d:] *= np.exp(-(np.arange(n - d) / SR) * 7.0)
-    return e
-
-
-def _bandpass(x, lo, hi):
-    """Cheap RBJ band-pass, used to shape noise bursts into body sounds."""
-    import numpy as _np
-    lo = max(20.0, min(lo, SR * 0.45))
-    hi = max(lo * 1.6, min(hi, SR * 0.45))
-    w0 = 2 * math.pi * math.sqrt(lo * hi) / SR
-    q = max(0.5, math.sqrt(lo * hi) / max(hi - lo, 1.0))
-    alpha = math.sin(w0) / (2 * q)
-    b0, b2 = alpha, -alpha
-    a0, a1, a2 = 1 + alpha, -2 * math.cos(w0), 1 - alpha
-    y = _np.zeros_like(x)
-    x1 = x2 = y1 = y2 = 0.0
-    for i in range(len(x)):
-        v = (b0 / a0) * x[i] + (b2 / a0) * x2 - (a1 / a0) * y1 - (a2 / a0) * y2
-        x2, x1 = x1, x[i]
-        y2, y1 = y1, v
-        y[i] = v
-    return y
-
-
-def _swing(t):
-    """Exponential 'meat' curve: a fast attack and a long, soft tail."""
-    return np.exp(-t * 16.0) * (1.0 - np.exp(-t * 900.0))
-
-
-def thud(size=1.0, kind="hit", length=0.55, seed=0):
-    """A punch, built from the four parts a punch actually has.
-
-    ``body``   the thump of mass behind the blow: a sine that drops in pitch
-    ``smack``  the "pak" of skin and glove: a 40 ms band-passed burst, the part
-               that makes it read as a fist and not as a door slamming
-    ``flesh``  a longer, lower noise tail, the meat of the impact
-    ``ring``   bone-on-bone for blocks and clashes only
-
-    Each kind retunes those four: blocks are short and bright, body shots are
-    dark and round, the finisher is lower and longer than everything else.
-    """
-    n = int(length * SR)
-    t = np.arange(n) / SR
-    # every blow gets its own noise: 29 identical hits would sound looped
-    rng = np.random.default_rng(int(1000 + 137 * size + 7919 * seed + len(kind)))
-
-    # ---- per-kind voicing
-    low = 112.0 - 30.0 * min(size, 1.6)
-    if kind == "block":
-        low, smack_lo, smack_hi, tail_lo, tail_hi, hard, smack_g, body_g = (
-            150.0, 700.0, 3200.0, 300.0, 1400.0, 1.15, 0.65, 0.55)
-    elif kind == "clash":
-        low, smack_lo, smack_hi, tail_lo, tail_hi, hard, smack_g, body_g = (
-            165.0, 900.0, 4600.0, 400.0, 2200.0, 1.3, 0.8, 0.5)
-    elif kind == "body":
-        low, smack_lo, smack_hi, tail_lo, tail_hi, hard, smack_g, body_g = (
-            82.0, 320.0, 1500.0, 140.0, 700.0, 0.6, 0.55, 1.25)
-    elif kind == "final":
-        low, smack_lo, smack_hi, tail_lo, tail_hi, hard, smack_g, body_g = (
-            68.0, 500.0, 3600.0, 160.0, 900.0, 1.2, 2.1, 1.15)
-    else:                                     # a clean landed punch
-        low, smack_lo, smack_hi, tail_lo, tail_hi, hard, smack_g, body_g = (
-            96.0, 700.0, 4200.0, 220.0, 1100.0, 1.15, 1.9, 0.72)
-
-    # ---- 1. body: a pitch-dropping thump with a little sub underneath
-    sweep = low * (1.0 + 1.35 * np.exp(-t * 42.0))
-    phase = 2 * np.pi * np.cumsum(sweep) / SR
-    body = np.sin(phase) * np.exp(-t * (12.0 if kind != "final" else 7.0))
-    body += 0.30 * np.sin(phase * 0.5) * np.exp(-t * 8.5)
-    body += 0.14 * np.sin(2.0 * phase) * np.exp(-t * 24.0)
-
-    # ---- 2. smack: the short bright burst that says "fist"
-    sm = _bandpass(rng.normal(0, 1, n).astype(np.float32), smack_lo, smack_hi)
-    smack_env = (1.0 - np.exp(-t * 1400.0)) * np.exp(-t * (34.0 + 10.0 * hard))
-    smack = sm * smack_env
-
-    # ---- 3. flesh: a longer, softer tail under the smack
-    fl = _bandpass(rng.normal(0, 1, n).astype(np.float32), tail_lo, tail_hi)
-    flesh = fl * _swing(t)
-
-    # ---- 4. ring, bone on bone
-    ring = np.zeros(n, np.float32)
-    if kind in ("block", "clash"):
-        for f, g in ((1180.0, 0.18), (1730.0, 0.12), (2640.0, 0.07)):
-            ring += g * np.sin(2 * np.pi * f * t + rng.uniform(0, 6.28)) * \
-                np.exp(-t * (26.0 if kind == "block" else 17.0))
-
-    sig = (body * body_g * 1.15 + smack * smack_g * 1.9 + flesh * 0.95 + ring)
-    sig *= _env(n, 0.0008, length * 0.5)
-    # a hair of soft clipping makes it sound recorded rather than pure
-    sig = np.tanh(sig * 1.4)
-    peak = float(np.max(np.abs(sig))) or 1.0
-    return (sig / peak * (0.55 + 0.22 * min(size, 1.8))).astype(np.float32)
-
-
-def critical_hit(length=1.25, seed=71):
-    """The hit the film stops for: a sub drop, a crack, and a bone ring.
-
-    A normal punch is a thump and a smack. This is the same blow heard close up
-    and in slow motion: the body of it drops an octave, the crack is the first
-    contact, and the ring is what hangs in the air while the picture holds.
-    """
-    n = int(length * SR)
-    t = np.arange(n) / SR
-    rng = np.random.default_rng(seed)
-    sweep = 26.0 + 48.0 * np.exp(-t * 2.2)
-    sub = np.sin(2 * np.pi * np.cumsum(sweep) / SR) * np.exp(-t * 2.4)
-    sub += 0.35 * np.sin(2 * np.pi * np.cumsum(sweep * 0.5) / SR) * np.exp(-t * 1.6)
-    crack = _bandpass(rng.normal(0, 1, n).astype(np.float32), 900.0, 5400.0)
-    crack *= np.exp(-t * 42.0)
-    ring = np.zeros(n, np.float32)
-    for f, g in ((176.0, 0.55), (309.0, 0.32), (587.0, 0.20), (1184.0, 0.10)):
-        ring += g * np.sin(2 * np.pi * f * t + rng.uniform(0, 6.28)) * np.exp(-t * 2.6)
-    sig = sub * 0.95 + crack * 0.55 + ring * 0.38
-    sig *= _env(n, 0.0012, length * 0.55)
-    sig = np.tanh(sig * 1.5)
-    return (sig / (np.max(np.abs(sig)) or 1.0) * 0.95).astype(np.float32)
-
-
-def whoosh(dur=0.22, up=True):
-    n = int(dur * SR)
-    rng = np.random.default_rng(11)
-    noise = rng.normal(0, 1, n).astype(np.float32)
-    out = np.empty(n, np.float32)
-    y = 0.0
-    for i in range(n):
-        k = 0.02 + 0.11 * (i / n if up else 1 - i / n)
-        y += k * (noise[i] - y)
-        out[i] = y
-    w = np.sin(np.pi * np.linspace(0, 1, n)) ** 2
-    return (out * w * 0.55).astype(np.float32)
-
-
 def synth_audio(scene, duration=DURATION) -> np.ndarray:
-    """Three-layer mix: musical bed, movement, and hits that duck the bed.
+    """The soundtrack. Built in ``fight/sound.py``: foley, taiko score and mix.
 
-    The bed is rendered on its own so it can be side-chained: every impact pulls
-    it down about 8 dB for a moment, which is what makes a punch audible instead
-    of drowning in the drums.
+    The audio is derived from the scene's own events — impacts, foot plants from
+    the solved rig, the close-up inserts, the K.O. card — so a fight that changes
+    changes its sound with it, and nothing has to be re-timed by hand.
     """
-    n = int(duration * SR)
-    bed = np.zeros((n, 2), np.float32)
-    fx = np.zeros((n, 2), np.float32)
-    hits = np.zeros((n, 2), np.float32)
-
-    def add(buf, sig, t, gain=1.0, pan=0.0):
-        if t < 0:
-            return
-        i0 = int(t * SR)
-        if i0 >= n:
-            return
-        m = min(len(sig), n - i0)
-        ang = (pan + 1.0) * math.pi / 4.0        # constant-power panning
-        buf[i0:i0 + m, 0] += sig[:m] * gain * math.cos(ang)
-        buf[i0:i0 + m, 1] += sig[:m] * gain * math.sin(ang)
-
-    def note(freq, dur, gain, t, pan=0.0, kind="sine"):
-        nn = int(dur * SR)
-        tt = np.arange(nn) / SR
-        if kind == "sine":
-            s = np.sin(2 * np.pi * freq * tt) + 0.35 * np.sin(4 * np.pi * freq * tt)
-        else:
-            s = np.sign(np.sin(2 * np.pi * freq * tt)) * 0.5
-        s = s * np.exp(-tt * 3.2) * _env(nn, 0.004, dur * 0.7)
-        add(bed, s.astype(np.float32), t, gain, pan)
-
-    # ---- 1. low cinematic pulse bed
-    tt = np.arange(n) / SR
-    swell = np.clip((tt - 0.4) / 2.0, 0, 1) * np.clip((duration - 1.0 - tt) / 3.0, 0, 1)
-    drone = (np.sin(2 * np.pi * 41.2 * tt) * 0.5 + np.sin(2 * np.pi * 61.7 * tt) * 0.3)
-    for ch in (0, 1):
-        bed[:, ch] += (drone * swell * 0.11).astype(np.float32)
-
-    # ---- 2. drums from the FIGHT! cue to the K.O.
-    t0, t1 = 2.15, 24.9
-    beat, i = t0, 0
-    while beat < t1:
-        add(bed, thud(0.7, kind="body", length=0.26), beat,
-            0.34 if i % 2 == 0 else 0.20)
-        sn = np.random.default_rng(20 + i).normal(0, 1, int(0.11 * SR)).astype(np.float32)
-        sn *= np.exp(-np.arange(len(sn)) / SR * 38)
-        add(bed, sn, beat + 0.25, 0.10)
-        beat += 0.5
-        i += 1
-    h = t0
-    while h < t1:
-        hs = np.random.default_rng(40 + int(h * 100)).normal(0, 1, int(0.045 * SR)).astype(np.float32)
-        hs *= np.exp(-np.arange(len(hs)) / SR * 120)
-        add(bed, hs, h, 0.045, pan=0.35)
-        h += 0.25
-
-    # ---- 3. movement: a swish before every strike, plus the sweeps
-    for e in scene["impacts"]:
-        add(fx, whoosh(0.24, up=e["x"] > DESIGN_W / 2), e["t"] - 0.10, 0.26,
-            pan=(e["x"] / DESIGN_W) * 2 - 1)
-    for tt_ in (6.9, 15.14, 18.98, 23.84):
-        add(fx, whoosh(0.3, up=tt_ < 12), tt_ - 0.12, 0.22,
-            pan=-0.25 if tt_ < 12 else 0.25)
-
-    # ---- 4. the hits themselves
-    for e in scene["impacts"]:
-        pan = (e["x"] / DESIGN_W) * 2 - 1
-        kind = e["kind"]
-        if kind == "block":
-            add(hits, thud(0.7, kind="block", length=0.26, seed=int(e["t"] * 100)),
-                e["t"], 0.95, pan)
-        elif kind == "hit":
-            body_shot = abs(e["t"] - 5.16) < 0.05 or abs(e["t"] - 23.28) < 0.05
-            add(hits, thud(1.0, kind="body" if body_shot else "hit", length=0.42,
-                           seed=int(e["t"] * 100)), e["t"], 1.2, pan)
-        elif kind == "clash":
-            add(hits, thud(1.2, kind="clash", length=0.42, seed=int(e["t"] * 100)),
-                e["t"], 1.25, pan)
-        elif kind == "final":
-            add(hits, thud(1.8, kind="final", length=1.05, seed=97), e["t"], 1.5, pan)
-            add(hits, thud(1.3, kind="clash", length=0.5, seed=13), e["t"] + 0.012,
-                0.8, pan)
-    for tt_ in scene["dust"]:
-        add(hits, thud(0.3, kind="body", length=0.22, seed=int(tt_ * 100)), tt_, 0.30,
-            pan=-0.2)
-    # the three close-ups: a blow heard from inside the skull
-    for i, (start, dur, side, expr, kind) in enumerate(cuts_of(scene)):
-        add(hits, critical_hit(1.25 if kind == "xray" else 0.9, seed=71 + i), start,
-            1.05 if kind == "xray" else 0.85, pan=(-0.4 if side == "red" else 0.4))
-
-    # ---- 5. side-chain: the bed ducks under every hit
-    duck = np.ones(n, np.float32)
-    for e in scene["impacts"]:
-        depth = 0.42 if e["kind"] in ("hit", "clash", "final") else 0.30
-        i0 = int(max(0, e["t"] - 0.02) * SR)
-        i1 = min(n, int((e["t"] + 0.20) * SR))
-        if i0 >= i1:
-            continue
-        seg = np.arange(i1 - i0) / SR
-        env = np.minimum(1.0, seg / 0.012) * np.exp(-np.maximum(0.0, seg - 0.02) * 11.0)
-        duck[i0:i1] = np.minimum(duck[i0:i1], 1.0 - depth * env)
-    # and the bed drops out entirely under a close-up: the picture has stopped,
-    # so the music must too, or the slow motion does not read as slow
-    for start, dur, side, expr, kind in cuts_of(scene):
-        i0 = int(max(0, start - 0.02) * SR)
-        i1 = min(n, int((start + dur * 0.9) * SR))
-        if i0 >= i1:
-            continue
-        seg = np.arange(i1 - i0) / SR
-        env = np.minimum(1.0, seg / 0.010) * np.exp(-np.maximum(0.0, seg - 0.05) * 5.0)
-        duck[i0:i1] = np.minimum(duck[i0:i1], 1.0 - 0.70 * env)
-    for ch in (0, 1):
-        bed[:, ch] *= duck
-
-    # ---- 6. rise to victory: C - E - G - C, major
-    for i, (f, dt_) in enumerate(zip((261.63, 329.63, 392.00, 523.25),
-                                     (0.0, 0.16, 0.32, 0.60))):
-        note(f, 1.6, 0.30 if i < 3 else 0.36, 25.35 + dt_, pan=0.15 * (i - 1.5))
-        note(f * 2, 1.0, 0.06, 25.35 + dt_, pan=-0.1, kind="sq")
-
-    mix = bed + fx + hits
-    fin, fout = int(0.5 * SR), int(1.3 * SR)
-    mix[:fin] *= np.linspace(0, 1, fin)[:, None]
-    mix[-fout:] *= np.linspace(1, 0, fout)[:, None]
-    mix = np.tanh(mix * 1.9)
-    peak = float(np.max(np.abs(mix))) or 1.0
-    mix = mix / peak * 0.94
-    return np.clip(mix, -1.0, 1.0).astype(np.float32)
+    from . import sound
+    return sound.score(scene, duration)
 
 
 def write_wav(path, stereo):
@@ -1540,8 +1280,17 @@ def _render_chunk(job):
     return path
 
 
-def _write_audio(wav_path: str, seconds: float, set_name: str) -> None:
-    write_wav(wav_path, synth_audio(scene(set_name), seconds))
+def _write_audio(wav_path: str, seconds: float, set_name: str,
+                 start: float = 0.0) -> None:
+    """The score for the whole film, then the part this render actually covers.
+
+    A partial render (``--start 17 --end 23``) used to get the first six seconds
+    of the soundtrack, which is why a slice sounded like a different fight.
+    """
+    sc = scene(set_name)
+    full = synth_audio(sc, start + seconds)
+    i0 = int(start * SR)
+    write_wav(wav_path, full[i0:i0 + int(seconds * SR)])
 
 
 def render(out_path: str, w: int = DESIGN_W, h: int = DESIGN_H, workers: int = 2,
@@ -1565,8 +1314,8 @@ def render(out_path: str, w: int = DESIGN_W, h: int = DESIGN_H, workers: int = 2
     # while the others draw frames, instead of after them
     ap = None
     if audio:
-        ap = Process(target=_write_audio, args=(wav, total / FPS, set_name),
-                     daemon=True)
+        ap = Process(target=_write_audio,
+                     args=(wav, total / FPS, set_name, start), daemon=True)
         ap.start()
 
     # one segment per worker: render + encode together, then join the segments
