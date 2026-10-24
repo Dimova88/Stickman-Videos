@@ -411,8 +411,10 @@ SHOTS_STEEL = (
          dof=0.06, style="cut", ground=0.79),
     dict(t0=22.90, t1=24.40, anchor="action", zoom=1.18, z1=1.26, follow=1.0,
          dof=0.10, style="whip", ground=0.78, zoom_hit=0.12),
-    dict(t0=24.40, t1=25.90, anchor="down", zoom=1.40, follow=1.0, dof=0.20,
-         style="cut", ground=0.74),
+    # tight on the body, but not so tight that the man who put it there is out
+    # of shot: at 1.40 the winner was cropped and the beat had no author
+    dict(t0=24.40, t1=25.90, anchor="winner", zoom=1.24, follow=1.0, dof=0.16,
+         style="cut", ground=0.80),
     # the winner shot sits low: the K.O. card needs the air above his head
     dict(t0=25.90, t1=30.20, anchor="winner", zoom=1.12, z1=1.00, follow=0.5,
          dof=0.14, style="whip", ground=0.87),
