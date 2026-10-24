@@ -17,8 +17,9 @@ import wave
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from .clash import (BLUE, BLUE_DARK, DESIGN_H, DESIGN_W, DURATION, FPS, GROUND,
-                    INK, RED, RED_DARK, build)
+from .clash import (BLUE, BLUE_DARK, DESIGN_H, DESIGN_W, DURATION, FIG_SCALE, FPS,
+                    GROUND, INK, RED, RED_DARK, STANCE, build)
+from .poses import to_pose
 from .insert import CUTS as INSERTS, cut_at, draw_insert
 from .core import SEG, SEGMENT_ORDER, solve
 from .draw import Canvas, Cam
@@ -501,6 +502,22 @@ def _speed(now, then, sid: int, dt: float = 0.05):
     return (b[0] - a[0], b[1] - a[1]), math.hypot(b[0] - a[0], b[1] - a[1]) / dt
 
 
+def body(track, t: float, squash: float = 0.0, push: float = 0.0):
+    """The skeleton of one fighter at animation time ``t``.
+
+    ``squash`` folds the pose around the blow that just landed (see
+    ``impact.compress``) and ``push`` shoves it back off its feet; both come
+    from the same envelope, so the shadow and the smear follow the body.
+    """
+    if squash <= 0.002 and abs(push) < 0.5:
+        return track.skel(t)
+    from .impact import compress
+    p, x = track.sample(t)
+    pose = to_pose(compress(p, squash), x + push, GROUND, facing=track.facing,
+                   scale=FIG_SCALE, widen=STANCE)
+    return solve(pose)
+
+
 def draw_fighter(cv: Canvas, track, t: float) -> None:
     """The body: bowed spine, tapered limbs, feet on the floor, hands, face.
 
@@ -508,13 +525,22 @@ def draw_fighter(cv: Canvas, track, t: float) -> None:
     against — the anatomy only changes how that skeleton is painted, plus the
     speed-driven deformation (stretch along the swing, joints trailing behind).
     """
-    pose = track.pose_at(t)
-    sk = solve(pose)
+    squash = getattr(track, "_squash", 0.0)
+    push = getattr(track, "_push", 0.0)
+    if squash > 0.002 or abs(push) >= 0.5:
+        from .impact import compress
+        p, x = track.sample(t)
+        pose = to_pose(compress(p, squash), x + push, GROUND, facing=track.facing,
+                       scale=FIG_SCALE, widen=STANCE)
+        sk = solve(pose)
+    else:
+        pose = track.pose_at(t)
+        sk = solve(pose)
     u = cv.unit() * pose.scale
     colour, dark = track.colour, track.dark
     g = GROUND
 
-    then = track.skel(max(0.0, t - 0.05)) if t > 0.06 else sk
+    then = body(track, max(0.0, t - 0.05), squash, push) if t > 0.06 else sk
 
     def k_of(sid: int):
         vel, spd = _speed(sk, then, sid)
@@ -897,9 +923,16 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
     """
     cam = Cam(640.0, 360.0, 1.0)
     cv = Canvas(DESIGN_W, DESIGN_H, cam)
+    # The animation clock: at every contact it stops for a few frames (the
+    # hitstop) and then catches up at 2x, so nothing drifts over the film. The
+    # whole painted world rides it — bodies, shadow, smear, dust, landscape and
+    # camera shake — so the instant of contact is one held frame. Only the
+    # impact flash and the HUD stay on the real clock: the world freezes, the
+    # blow rings out.
+    ta = scene["clock"].at(t)
     cut = cut_at(t)
     if cut is None:
-        draw_background(cv, t, scene)
+        draw_background(cv, ta, scene)
 
     if cut is not None:
         # the close-up register: a cut, not a camera move, so no HUD shadows,
@@ -910,8 +943,13 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
             return cv.img.resize((w, h), Image.LANCZOS)
         return cv.img
 
+    for tr in (scene["red"], scene["blue"]):
+        tr._squash = scene["squash_at"](scene["impacts"], tr.name, ta)
+        tr._push = scene["push_at"](scene["impacts"], tr.name, ta, tr.facing)
+
     # far fighter first: the one further from the centre of action
-    heads = {tr.name: tr.skel(t) for tr in (scene["red"], scene["blue"])}
+    heads = {tr.name: body(tr, ta, tr._squash, tr._push)
+             for tr in (scene["red"], scene["blue"])}
     order = sorted((scene["red"], scene["blue"]),
                    key=lambda tr: -abs(heads[tr.name].head[0] - 640))
 
@@ -930,12 +968,12 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
     ov.flush()
 
     for tr in order:
-        trails(cv, tr, t)
+        trails(cv, tr, ta)
     for tr in order:
-        draw_fighter(cv, tr, t)
+        draw_fighter(cv, tr, ta)
     cv.flush()
 
-    draw_dust(scene["dust"], t, cv.unit(), *cv.wp((DESIGN_W * 0.5, GROUND)), cv)
+    draw_dust(scene["dust"], ta, cv.unit(), *cv.wp((DESIGN_W * 0.5, GROUND)), cv)
 
     flash = []
     draw_impacts(cv, scene["impacts"], t, flash)

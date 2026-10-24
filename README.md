@@ -352,7 +352,47 @@ holds. Measured on the finished mix, the three close-ups sit ~6 dB (face) and
 ~9 dB (X-ray) above an ordinary landed punch, and the music is 70 % down under
 each of them.
 
-### A second set: the desert
+### The blow has weight: hitstop, compression, anticipation (*fight/impact.py*)
+
+A hit is not a fast movement, it is a *stopped* movement. Three timing layers do
+that on top of the existing `time · x · pose` timeline, without re-keying it:
+
+**Hitstop — a clock, not a keyframe.** `Clock` is a piecewise map from real time
+to animation time: for every contact it runs at **0** for 2–4 frames, then at
+**2x** for the same number of frames. The integral of that window is exactly the
+window's length, so after two holds' worth of frames the map is the identity
+again — every later key, cut, title and sound stays exactly where it was
+authored, and the film is still 30.00 s. Frames held: 1 for a block, 2 for a
+landed hit (3 when the hit is a full-strength one), 2 for a clash, 4 for the
+finisher. Measured on the master, the three frames around the 10.94 s kick
+differ by 0.2 / 255 on average (only the impact star develops) while the frame
+before and after it differ by 20 and 9.
+
+The whole painted world rides that clock — bodies, contact shadow, smear,
+dust, the landscape crop and the camera shake — so the instant of contact is
+one held frame. The impact flash and the HUD stay on the real clock, so the
+world freezes while the blow rings out.
+
+**Compression — a pose delta, not a second pose.** At the frozen instant the
+fighter being hit is folded around the fist: `compress(pose, k)` drops the hips
+17 units, caves the spine 11°, pulls the head 7° over the back shoulder and
+drives the guard 12° into the chest, then shoves the body 13 px away from the
+blow. It rises over the last 2.5 frames before contact and decays over 0.17 s
+after, so it is already full on the frame the world freezes on. Because it is a
+delta on top of whatever pose the choreography had, it works for every one of
+the nine landed blows plus the clash, with no authoring.
+
+**Anticipation — the loaded key.** Every landed blow already had a key ~0.26 s
+before it, holding a guard. `add_anticipation` finds that key (never moving it,
+only changing its pose) and coils the limb that is about to strike, chosen from
+the contact pose itself: a punch pulls the elbow back and loads the fist at the
+shoulder, a kick chambers the knee with the heel under the hip; in both cases
+the weight drops 6 units and the body turns 5° away. Ten landed blows plus the
+two clashes re-pose a key on each side, 20 keys in all, and the wind-up adds no
+time to the beat: it only makes the frame that was already there read as a
+load. Because it happens before the spacing and reach
+solvers run, the gap between the pair is still solved against the coiled pose.
+
 ### A second set: the desert
 
 The same fight re-staged on a new plate (`--set desert`), with its own title

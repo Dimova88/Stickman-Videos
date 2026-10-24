@@ -19,6 +19,7 @@ import math
 
 from . import poses as PS
 from .core import Pose, solve
+from .impact import Clock, add_anticipation, compress, push_at, squash_at
 from .poses import fade, mirror, to_pose
 
 FPS = 24
@@ -366,6 +367,11 @@ def build(set_name: str = "mountain") -> dict:
     title(26.60, 29.30, words["sub"], "sub")
     title(0.0, 30.0, words["hud"], "hud")
 
+    # ---------------------------------------------------------- anticipation
+    # the loaded key before every landed blow becomes an actual coil
+    for tr in (red, blue):
+        add_anticipation(tr, impacts)
+
     # ---------------------------------------------------------------- spacing
     # the pair must never collapse into one blob: heads stay a fist-and-forearm
     # apart, closer only when someone is on top of the other
@@ -552,4 +558,6 @@ def build(set_name: str = "mountain") -> dict:
               (25.4, 26.0, 0.0, 1.04), (30.0, 30.0, 2.0, 1.05)]
 
     return {"set": set_name, "red": red, "blue": blue, "impacts": impacts,
-            "dust": dusts, "texts": texts, "camera": camera}
+            "dust": dusts, "texts": texts, "camera": camera,
+            "clock": Clock(impacts), "squash_at": squash_at,
+            "push_at": push_at, "compress": compress}
