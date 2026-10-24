@@ -613,8 +613,9 @@ def pose_of(track, t: float, squash: float = 0.0, push: float = 0.0):
     p = footwork.apply(track, t, p)
     if squash > 0.002:
         p = compress(p, squash)
-    return to_pose(p, x + push, GROUND, facing=track.facing,
-                   scale=FIG_SCALE, widen=STANCE)
+    return to_pose(p, x + push, track.ground_y(), facing=track.facing_at(t),
+                   scale=FIG_SCALE * (1.0 + 0.08 * getattr(track, "z", 0.0)),
+                   widen=STANCE)
 
 
 def body(track, t: float, squash: float = 0.0, push: float = 0.0):

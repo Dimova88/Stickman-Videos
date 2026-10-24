@@ -216,6 +216,47 @@ python tools/render_clash.py --set desert --out renders/desert_clash_720p.mp4
    192 kbps AAC with `+faststart`. `--preset/--crf/--tune` override the
    defaults.
 
+### Turning on the horizontal axis (*fight/rig.py*)
+
+The fighters used to have an integer `facing`, decided when the track was made:
+red looks right, the rivals look left, forever. That works while the choreography
+is one line with a man on each side, and it collapses the moment the fight uses
+the arena — after a side swap the protagonist is drawn looking away from the man
+in front of him, which reads as moonwalking.
+
+`facing_scale` is continuous from +1 to -1, and a turn takes three frames through
+zero. The angle map is `atan2(sin a, facing_scale * cos a)`: at +1 the authored
+pose, at -1 its mirror, in between a body foreshortened through the profile. The
+knee bend comes out right for free, because the chain is solved once in the
+canonical frame and drawn from the other side. The schedule is not authored by
+hand — `rig.drive_facings()` walks the timeline and turns each fighter towards
+the man he is **engaged with** (the beat sheet knows who that is; "nearest" is a
+different and worse answer), with a look-ahead of one turn and a hold time so a
+body thrown overhead does not make the head swivel.
+
+### Five rhythms instead of one (*fight/beats.py*)
+
+The compiler used to give every exchange the same four phases and a recovery
+between each one — sixteen identical single blows from medium range. A beat now
+carries:
+
+* `gap` — the separation it wants at contact. A grapple asks for 20-34 px, the
+  start of a dash 200. `CROWD_GAP = 110` applies **only** to rivals waiting.
+* `chain` — no recovery: five cuts in a row, a barrage rather than five attacks.
+* `launch` / `air` — the defender leaves the floor and the attacker follows him,
+  which is how a juggle gets twelve frames with both men in the air.
+
+The blade film is authored as exchanges: a five-hit flurry, a collar grab into
+an overhead throw, a pincer with a rival on each side, two aerial juggles, two
+matrix weaves, and three grapples — 41 beats, 11 move types, 2 side swaps.
+
+### Depth (*Track.z*)
+
+The plate is painted flat, so depth is staged: a rival in the back lane stands
+26 px higher on the ground and is drawn smaller, one in the near lane lower and
+larger. The crowd is split to both sides of the arena, because a crowd on one
+side is a chorus line — and it is also the reason the hero never had to turn.
+
 ### The beat engine (*fight/beats.py*)
 
 A fight is a list of `CombatBeat`s, not a pile of keys. Each beat names the

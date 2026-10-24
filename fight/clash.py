@@ -56,12 +56,72 @@ EASE = {
 
 
 class Track:
-    """One fighter: keys of (time, pose, x, ease), sampled with smoothstep."""
+    """One fighter: keys of (time, pose, x, ease), sampled with smoothstep.
+
+    Two more axes live here now: ``facing_keys`` (the horizontal turn, continuous
+    from +1 to -1) and ``z`` (the depth lane the figure stands in).
+    """
 
     def __init__(self, name: str, facing: int, colour, dark):
         self.name, self.facing = name, facing
         self.colour, self.dark = colour, dark
         self.keys: list[tuple[float, dict, float, str]] = []
+        #: the turn: (time, facing_scale) keys. +1 looks right, -1 looks left and
+        #: the numbers in between are the body seen through the profile.
+        self.facing_keys: list[tuple[float, float]] = [(0.0, float(facing))]
+        #: depth lane: -1 is the back of the arena, +1 is closest to the lens
+        self.z = 0.0
+
+    def ground_y(self) -> float:
+        """Where this fighter's feet stand: the main line, moved by his lane.
+
+        A rival waiting in the back of the arena stands 26 px *higher* on the
+        plate than the one in the fight, and a body thrown towards the lens
+        lands lower. Both are drawn smaller too, so the depth reads even though
+        the plate itself is flat.
+        """
+        return GROUND + 26.0 * self.z
+
+    # -- the horizontal axis ---------------------------------------------
+    def facing_at(self, t: float) -> float:
+        ks = self.facing_keys
+        if not ks:
+            return float(self.facing)
+        if t <= ks[0][0]:
+            return ks[0][1]
+        if t >= ks[-1][0]:
+            return ks[-1][1]
+        for i in range(len(ks) - 1):
+            a, b = ks[i], ks[i + 1]
+            if a[0] <= t <= b[0]:
+                u = (t - a[0]) / max(b[0] - a[0], 1e-9)
+                return a[1] + (b[1] - a[1]) * u
+        return ks[-1][1]
+
+    def _fk(self, t: float, val: float) -> None:
+        self.facing_keys = [k for k in self.facing_keys if abs(k[0] - t) > 1e-6]
+        self.facing_keys.append((float(t), float(val)))
+        self.facing_keys.sort(key=lambda k: k[0])
+
+    def set_facing(self, t: float, target: float, ramp: float | None = None) -> None:
+        """Start a turn at ``t``; it arrives at ``target`` ``ramp`` seconds later.
+
+        Three frames at 24 fps, and the scale passes through zero on the way, so
+        the shoulders and the stance compress to the profile before they open out
+        on the other side. Nothing here is a sign flip of the drawing: a hard
+        flip is a teleport, and a teleport is what the film was doing.
+        """
+        from .rig import FLIP_TIME
+        ramp = FLIP_TIME if ramp is None else ramp
+        cur = self.facing_at(t)
+        if (1 if cur >= 0.0 else -1) == (1 if target >= 0.0 else -1):
+            return
+        # no turkey-neck: a turn that starts less than a beat after the last one
+        # finished is a body twitching, not a body deciding
+        if self.facing_keys and (t - self.facing_keys[-1][0]) < 0.22:
+            return
+        self._fk(t, cur)
+        self._fk(t + ramp, float(target))
 
     def key(self, t: float, pose: dict, x: float, ease: str = "smooth") -> "Track":
         self.keys = [k for k in self.keys if abs(k[0] - t) > 1e-6]
@@ -106,8 +166,8 @@ class Track:
 
     def pose_at(self, t: float) -> Pose:
         p, x = self.sample(t)
-        return to_pose(p, x, GROUND, facing=self.facing, scale=FIG_SCALE,
-                       widen=STANCE)
+        return to_pose(p, x, self.ground_y(), facing=self.facing_at(t),
+                       scale=FIG_SCALE * (1.0 + 0.08 * self.z), widen=STANCE)
 
     def skel(self, t: float):
         return solve(self.pose_at(t))

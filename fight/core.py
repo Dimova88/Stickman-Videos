@@ -61,7 +61,7 @@ class Pose:
 
     x: float = 0.0
     y: float = 0.0
-    facing: int = 1
+    facing: float = 1.0
     scale: float = 1.0
     head_turn: float = 0.0
     angles: tuple = (0.0,) * 10
@@ -95,7 +95,7 @@ class Pose:
     @staticmethod
     def from_vec(v) -> "Pose":
         v = [float(a) for a in v]
-        return Pose(x=v[0], y=v[1], facing=(1 if v[2] >= 0 else -1), scale=v[3],
+        return Pose(x=v[0], y=v[1], facing=v[2], scale=v[3],
                     head_turn=v[4], angles=tuple(v[5:15]), spine=v[15],
                     pitch_a=v[16], pitch_b=v[17], grip_a=v[18], grip_b=v[19],
                     lift_a=v[20], lift_b=v[21])
@@ -251,7 +251,10 @@ def solve(pose: Pose) -> Skeleton:
     dx, dy = neck[0] - hip[0], neck[1] - hip[1]
     n = math.hypot(dx, dy) or 1.0
     nx, ny = -dy / n, dx / n
-    bow = pose.spine * pose.scale * pose.facing
+    # the bow follows the turn: at the profile the spine has no width to bow
+    # into, so the offset is scaled by the facing rather than flipped by it
+    from .rig import squash
+    bow = pose.spine * pose.scale * squash(pose.facing)
     c1 = (hip[0] + dx / 3.0 + nx * bow, hip[1] + dy / 3.0 + ny * bow)
     c2 = (hip[0] + 2.0 * dx / 3.0 + nx * bow, hip[1] + 2.0 * dy / 3.0 + ny * bow)
     spine = []

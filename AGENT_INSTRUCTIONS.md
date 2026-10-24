@@ -108,6 +108,38 @@ beat sheet, root motion span, crowd stacking, zoom range and impact frames on
 the *rendered* timeline, not just the limb lengths. An anatomy-only pass is not
 a completion criterion.
 
+## PHASE 6: THE HORIZONTAL AXIS, AND WHY A FIGHT MUST NOT KEEP A TEMPO
+
+1. **TURNING IS MANDATORY.** No fighter keeps one `facing` for a whole film.
+   Every track carries a continuous `facing_scale` in [-1, +1] (+1 looks right,
+   -1 looks left). A turn interpolates over **three frames** and passes through
+   zero, which is what compresses the shoulders, the stance, the blade and the
+   eyes and reads as a 2.5D turn instead of a teleport. The angle map is
+   `atan2(sin a, facing_scale * cos a)`; the knee and elbow bend direction
+   follows the same reflection, so a limb can never fold backwards.
+   The protagonist turns at least **6** times, the rivals **4** in total, and
+   they flank him from **both sides**. `rig.drive_facings()` derives the whole
+   schedule from the beat sheet - the man he is *engaged with*, not the nearest
+   silhouette, which is a different question and a worse answer.
+
+2. **NO METRONOME.** `compile_beats()` must not give every exchange the same
+   four phases and the same recovery. The five `ExchangeType` patterns are the
+   minimum vocabulary:
+   - `flurry_clash_barrage` - five cuts with `recovery = 0` between them
+   - `pincer_ambush_pingpong` - one rival on each side, forcing a turn
+   - `aerial_juggle_slam` - launcher, both men in the air, meteor finish
+   - `close_grapple_throw` - 20-34 px, collar grab, throw over the shoulder
+   - `matrix_weave_counter` - the spine arches away from the blade, then the
+     counter
+   `CROWD_GAP` (110 px) applies **only** to rivals waiting their turn. Between
+   the attacker and the defender the distance is whatever the beat asks for:
+   under 42 px for a grapple, over 200 px for the start of a dash.
+
+3. **DEPTH IS STAGED.** The plate is flat, so `Track.z` moves a fighter across
+   it: the ground line moves by `26 * z`, the figure is drawn `1 + 0.08 * z`
+   times as large, and the waiting rivals stand on different lanes. Four men on
+   one horizontal line is a chorus line, not a fight.
+
 ## PHASE 4: PRE-RENDER SELF-AUDIT CHECKLIST
 
 Before finalizing any video generation, verify the following invariants in your code:
@@ -120,6 +152,10 @@ Before finalizing any video generation, verify the following invariants in your 
 - [ ] Does the weapon smear survive the dash (local crescent, no translation gate)?
 - [ ] Is every knockdown ballistic, and does at least one body stay on the floor?
 - [ ] Are the waiting enemies in their own lanes, and does `tools/audit_film.py` pass?
+- [ ] Does the protagonist turn at least 6 times, and do the rivals flank him from both sides?
+- [ ] Is there at least one exchange with no recovery between the blows?
+- [ ] Is there at least one sequence with **both** fighters off the floor?
+- [ ] Does the pair ever get closer than 42 px (a grapple), and never stack in waiting lanes?
 
 ---
 
@@ -136,6 +172,9 @@ constraint, never the file.
 | Root motion, stepping | `fight/footwork.py` (planted feet, stride, parabolic lift). Feet are authored as world targets in `P()` and solved, never drawn as raw angles |
 | `DOWN` / `DEAD` rigid state | `fight/poses.py` — `DOWN`, `SPRAWL`; `to_pose()` pins the pelvis and lays the feet out; horizontal motion decays through `ragdoll.reanchor()` |
 | Four-phase beats | keys + easings in `fight/steel.py` / `fight/clash.py`; hitstop and compression envelopes in `fight/impact.py`; the knockdown arc in `fight/ragdoll.py` |
+| The horizontal axis | `fight/rig.py` (`facing_scale`, `mirror_angle`, `drive_facings`), `Track.facing_keys` in `fight/clash.py`, applied by `poses.to_pose()` |
+| Exchange patterns | `fight/beats.py` - `gap`, `chain`, `launch`, `air` on `CombatBeat`; the flurry / pincer / juggle / grapple / weave beats in `fight/steel.py` |
+| Depth lanes | `Track.z` -> `Track.ground_y()` and the drawn scale in `clashfilm.pose_of()` |
 | Beat sheet | `fight/beats.py` — `CombatBeat`, `PRESETS`, `compile_beats()`; authored in `fight/steel.py`, measured by `tools/audit_film.py` |
 | Smear arcs | `fight/steelblade.py` — `local_crescent()` (the swing rebuilt in polar space about the **current** hilt: a crescent at any body speed) and `thrust_cone()` |
 | 2-frame impact frames | `fight/vfx.py` — `impact_frame_index()` decides, `impact_frame()` draws the inverted silhouettes plus 24 radial spikes |

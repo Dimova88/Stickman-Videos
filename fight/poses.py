@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import math
 
+from . import rig
 from .core import SEG, Pose, solve, _bent
 
 D2R = math.pi / 180.0
@@ -150,16 +151,22 @@ def _arm_angles(up: float, fore: float, facing: int):
     return u, f
 
 
-def to_pose(p: dict, x: float, ground: float, facing: int = 1, scale: float = 1.0,
-            widen: float = 1.0) -> Pose:
+def to_pose(p: dict, x: float, ground: float, facing: float = 1.0,
+            scale: float = 1.0, widen: float = 1.0) -> Pose:
     """Turn one pose into a drawable Pose.
 
     The pose is always solved in a canonical right-facing frame (a positive foot
     offset means "in front of the fighter"), and the finished body is then
-    reflected once about the hips when ``facing`` is -1. Reflecting the solved
-    figure instead of the inputs is what keeps a left-facing fighter's arms in
-    front of it: mirroring the input angles and *also* negating the resulting
-    angles cancelled out, which left blue punching away from its opponent.
+    reflected once about the hips by ``facing``. Reflecting the solved figure
+    instead of the inputs is what keeps a left-facing fighter's arms in front of
+    it: mirroring the input angles and *also* negating the resulting angles
+    cancelled out, which left blue punching away from its opponent.
+
+    ``facing`` is a *continuous* scale, not a sign: +1 is the authored pose, -1
+    is its mirror, and anything in between foreshortens the body through the
+    profile (see ``fight/rig.py``). Reflecting after the solve is also what makes
+    the knee bend flip with the turn for free — the chain is never solved
+    backwards, only drawn from the other side.
 
     ``widen`` stretches both planted feet apart for a wider stance; the leg
     solver then drops the hips as far as the new stance allows.
@@ -186,11 +193,13 @@ def to_pose(p: dict, x: float, ground: float, facing: int = 1, scale: float = 1.
     head_ang = torso + p["head"] * D2R
     ang = [torso, head_ang, au, af, bu, bf, tl, sl, tr, sr]
 
-    if facing < 0:
-        # one reflection of the solved figure: angle -> pi - angle
-        ang = [math.pi - a for a in ang]
-    return Pose(x=x, y=hip_y, facing=facing, scale=1.0,
-                head_turn=(p["head"] * D2R) * (1 if facing > 0 else -1),
+    # one reflection of the solved figure: at -1 this is the old ``pi - angle``,
+    # in between it squeezes the horizontal component (a body halfway through a
+    # turn is a body seen from the side)
+    ang = rig.mirror_angles(ang, facing)
+    side = 1.0 if facing >= 0.0 else -1.0
+    return Pose(x=x, y=hip_y, facing=float(facing), scale=1.0,
+                head_turn=(p["head"] * D2R) * side,
                 angles=tuple(ang), arm_k=ARM_K, leg_k=LEG_K, head_k=HEAD_K,
                 spine=float(p.get("spine", 0.0)) * scale,
                 pitch_a=float(p.get("toe_l", 0.0)) * D2R,

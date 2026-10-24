@@ -149,83 +149,158 @@ def build(set_name: str = "mountain") -> dict:
 
     from .beats import CombatBeat, compile_beats
 
+    # ---- the exchanges ------------------------------------------------
+    # Round 8: the film is no longer a list of single blows. Each exchange is a
+    # *pattern* with its own rhythm, its own distance and its own geometry:
+    #
+    #   flurry      five cuts with no recovery between them
+    #   grapple     the pair closes to a hand's width and one man is thrown
+    #   pincer      one rival on each side, so the hero has to turn
+    #   juggle      both men in the air, which no single beat can produce
+    #   weave       a dodge with a counter, in the middle of the blade
+    def B(t, atk, move, dfd, **kw):
+        return CombatBeat(t, atk, move, dfd, **kw)
+
     beats = [
-        # 1 — the opening blitz: he closes the distance instead of waiting
-        CombatBeat(3.96, "red", "blitz_dash_slash", "blue", lunge=176,
-                   from_x=596, to_x=772, defender_x=944, defender_end_x=1050,
-                   size=1.15),
-        # 2 — the follow-up rising cut lifts blue off his feet
-        CombatBeat(4.64, "red", "rising_dragon_slash", "blue", lunge=64,
-                   from_x=772, to_x=836, defender_x=1006, defender_end_x=1112,
-                   size=1.0, knock=150.0),
-        # 3 — teal steps in; the hero blocks on the move
-        CombatBeat(5.42, "teal", "parry_block", "red", lunge=-150,
-                   from_x=1160, to_x=1010, defender_x=836, outcome="parry",
-                   knock=36.0, size=0.6),
-        # 4 — the riposte: he turns through teal and ends on his far side
-        CombatBeat(6.14, "red", "parry_riposte_spin", "teal", lunge=150,
-                   from_x=836, to_x=1002, defender_x=1010, defender_end_x=1180,
-                   side_swap=True, size=1.1),
-        # 5 — and keeps going: a dash across the whole group
-        CombatBeat(7.20, "red", "blitz_dash_slash", "slate", lunge=140,
-                   from_x=1002, to_x=1140, defender_x=1152, defender_end_x=1180,
-                   size=0.95),
-        # 6 — slate gets the boot and leaves the floor
-        CombatBeat(8.32, "red", "spartan_front_kick", "slate", lunge=30,
-                   from_x=1140, to_x=1160, defender_x=1180, defender_end_x=1040,
-                   knock=170.0, size=1.0),
-        # 7 — blue is up again and lunges; teal answers from the other side
-        CombatBeat(9.10, "blue", "blitz_dash_slash", "red", lunge=-150,
-                   from_x=1112, to_x=980, defender_x=1160, outcome="parry",
-                   knock=30.0, size=1.0),
-        # 8 — the hero vaults back across the arena, over blue
-        CombatBeat(10.60, "red", "aerial_helm_breaker", "blue", lunge=-300,
-                   from_x=1160, to_x=860, defender_x=980, defender_end_x=1040,
-                   jump=126.0, side_swap=True, size=1.2),
-        # 9 — teal tries to take him in the air
-        CombatBeat(12.94, "teal", "sonic_thrust_pierce", "red", lunge=-140,
-                   from_x=1180, to_x=1040, defender_x=860, outcome="parry",
-                   knock=40.0, size=0.9),
-        # 10 — planted again, he cuts teal down for good
-        CombatBeat(13.60, "red", "blitz_dash_slash", "teal", lunge=130,
-                   from_x=860, to_x=990, defender_x=1040, defender_end_x=1120,
-                   outcome="lethal", knock=140.0, size=1.2),
-        # 11 — a beat of breathing room while slate comes back for more
-        CombatBeat(15.34, "slate", "blitz_dash_slash", "red", lunge=-160,
-                   from_x=1120, to_x=960, defender_x=990, outcome="parry",
-                   knock=34.0, size=1.0),
-        CombatBeat(16.04, "slate", "rising_dragon_slash", "red", lunge=-40,
-                   from_x=960, to_x=920, defender_x=990, outcome="parry",
-                   knock=30.0, size=1.0),
-        # 12 — the wide one: the hero jumps the last man and takes him down
-        CombatBeat(16.90, "red", "aerial_helm_breaker", "slate", lunge=140,
-                   from_x=920, to_x=1060, defender_x=1100, defender_end_x=1210,
-                   jump=118.0, outcome="lethal", knock=150.0, size=1.3),
-        # 13 — blue, the last one standing, locks blades
-        CombatBeat(19.92, "blue", "sonic_thrust_pierce", "red", lunge=-150,
-                   from_x=1150, to_x=1000, defender_x=1060, outcome="parry",
-                   knock=42.0, size=1.05, sparks=True),
-        # 14 — the push-off, then the finisher
-        CombatBeat(22.44, "red", "spartan_front_kick", "blue", lunge=34,
-                   from_x=1060, to_x=1094, defender_x=1000, defender_end_x=1010,
-                   knock=30.0, size=0.5),
-        CombatBeat(23.30, "red", "blitz_dash_slash", "blue", lunge=110,
-                   from_x=1094, to_x=1204, defender_x=1064, defender_end_x=980,
-                   outcome="lethal", knock=180.0, size=1.8, sparks=False),
+        # -- A. flurry_clash_barrage: five contacts, no pause between them ----
+        B(3.58, "red", "blitz_dash_slash", "blue", gap=56, chain=True,
+          from_x=700, to_x=740, size=0.9),
+        B(3.76, "red", "blitz_dash_slash", "blue", gap=54, chain=True,
+          from_x=740, to_x=756, size=0.9),
+        B(3.94, "red", "rising_dragon_slash", "blue", gap=52, chain=True,
+          from_x=756, to_x=772, size=0.9),
+        B(4.12, "red", "blitz_dash_slash", "blue", gap=54, chain=True,
+          from_x=772, to_x=788, size=0.9),
+        B(4.36, "red", "spartan_front_kick", "blue", gap=58, knock=100.0,
+          from_x=788, to_x=800, size=1.0),
+        # -- B. close_grapple_throw: collar grab, then a judo throw ---------
+        B(4.86, "blue", "dash_collar_grab", "red", gap=34,
+          from_x=900, to_x=830, size=0.9, dust=True),
+        B(5.28, "red", "overhead_judo_slam", "blue", gap=20, knock=250.0,
+          from_x=806, to_x=830, outcome="down", size=1.0),
+        # -- C. pincer_ambush_pingpong: one on each side --------------------
+        B(5.96, "teal", "blitz_dash_slash", "red", gap=58,
+          from_x=700, to_x=768, outcome="parry", knock=30.0, size=0.9),
+        B(6.30, "slate", "blitz_dash_slash", "red", gap=56,
+          from_x=1120, to_x=940, outcome="parry", knock=30.0, size=0.9),
+        B(6.66, "red", "spin_back_slash", "slate", gap=50, knock=160.0,
+          from_x=830, to_x=886, defender_x=930, side_swap=True, size=1.1),
+        # -- D. aerial_juggle_slam: off the floor, both of them ------------
+        B(7.22, "red", "rising_dragon_slash", "slate", gap=48, launch=140.0,
+          hold_air=0.40, from_x=886, to_x=930, size=1.1),
+        B(7.48, "red", "air_pursuit_slash", "slate", gap=44, air=132.0,
+          launch=124.0, hold_air=0.30, chain=True, from_x=930, to_x=948,
+          size=1.0),
+        B(7.68, "red", "air_pursuit_slash", "slate", gap=42, air=124.0,
+          launch=104.0, hold_air=0.24, chain=True, from_x=948, to_x=964,
+          size=1.0),
+        B(7.96, "red", "air_meteor_slam", "slate", gap=40, air=40.0,
+          knock=190.0, from_x=964, to_x=990, outcome="lethal", size=1.3),
+        # -- E. matrix_weave_counter: the blade passes his face ------------
+        B(8.84, "red", "matrix_weave", "teal", gap=66, outcome="whiff",
+          from_x=990, to_x=1000, size=0.8),
+        B(9.24, "red", "sonic_thrust_pierce", "teal", gap=58, knock=90.0,
+          from_x=1000, to_x=1050, size=1.1),
+        # -- F. flurry_clash_barrage, the other way round -------------------
+        B(9.96, "blue", "blitz_dash_slash", "red", gap=54, chain=True,
+          from_x=700, to_x=760, size=0.85),
+        B(10.12, "blue", "blitz_dash_slash", "red", gap=52, chain=True,
+          from_x=760, to_x=772, size=0.85),
+        B(10.28, "blue", "rising_dragon_slash", "red", gap=54, chain=True,
+          from_x=772, to_x=784, size=0.85),
+        B(10.44, "blue", "blitz_dash_slash", "red", gap=52, chain=True,
+          from_x=784, to_x=796, size=0.85),
+        B(10.70, "red", "spartan_front_kick", "blue", gap=56, knock=110.0,
+          from_x=800, to_x=838, size=1.0),
+        # -- G. the second grapple: teal throws the hero -------------------
+        B(11.40, "teal", "dash_collar_grab", "red", gap=34,
+          from_x=1100, to_x=1020, size=0.95),
+        B(11.86, "teal", "overhead_judo_slam", "red", gap=20, knock=250.0,
+          from_x=1044, to_x=1068, outcome="down", size=1.0),
+        # -- H. the second juggle, and the second kill ---------------------
+        B(13.30, "red", "rising_dragon_slash", "teal", gap=46, launch=140.0,
+          hold_air=0.36, from_x=800, to_x=880, size=1.1),
+        B(13.52, "red", "air_pursuit_slash", "teal", gap=44, air=132.0,
+          launch=122.0, hold_air=0.28, chain=True, from_x=880, to_x=898,
+          size=1.0),
+        B(13.72, "red", "air_pursuit_slash", "teal", gap=42, air=124.0,
+          launch=104.0, hold_air=0.22, chain=True, from_x=898, to_x=912,
+          size=1.0),
+        B(14.04, "red", "air_meteor_slam", "teal", gap=40, air=40.0,
+          knock=210.0, from_x=912, to_x=940, outcome="lethal", size=1.35),
+        # -- I. the last third: singles, then another pincer ---------------
+        B(15.30, "slate", "blitz_dash_slash", "red", gap=58,
+          from_x=1180, to_x=1060, size=1.0),
+        B(16.00, "red", "parry_riposte_spin", "slate", gap=50, knock=150.0,
+          from_x=980, to_x=1030, size=1.1),
+        B(17.10, "blue", "blitz_dash_slash", "red", gap=56,
+          from_x=700, to_x=770, size=1.0),
+        B(17.80, "red", "spartan_front_kick", "blue", gap=54, knock=90.0,
+          from_x=790, to_x=826, size=1.0),
+        B(18.50, "slate", "blitz_dash_slash", "red", gap=56,
+          from_x=1120, to_x=1000, outcome="parry", knock=28.0, size=0.9),
+        B(18.82, "blue", "blitz_dash_slash", "red", gap=54,
+          from_x=700, to_x=790, outcome="parry", knock=28.0, size=0.9),
+        B(19.30, "red", "spin_back_slash", "slate", gap=48, knock=140.0,
+          from_x=850, to_x=906, defender_x=900, side_swap=True, size=1.1),
+        B(20.28, "red", "blitz_dash_slash", "blue", gap=52, chain=True,
+          from_x=880, to_x=920, size=0.9),
+        B(20.46, "red", "blitz_dash_slash", "blue", gap=50, chain=True,
+          from_x=920, to_x=940, size=0.9),
+        B(20.64, "red", "rising_dragon_slash", "blue", gap=52, chain=True,
+          from_x=940, to_x=960, size=0.9),
+        B(20.90, "red", "spartan_front_kick", "blue", gap=56, knock=120.0,
+          from_x=960, to_x=1000, size=1.05),
+        B(21.90, "red", "sonic_thrust_pierce", "blue", gap=56, knock=80.0,
+          from_x=1010, to_x=1064, size=1.0),
+        # -- the finisher: the same cut as the opening, three times as hard
+        B(22.44, "red", "spartan_front_kick", "blue", gap=54, knock=30.0,
+          from_x=1060, to_x=1094, size=0.5),
+        B(23.30, "red", "blitz_dash_slash", "blue", gap=44, knock=180.0,
+          from_x=1094, to_x=1184, outcome="lethal", size=1.8),
     ]
+
+    # ---- the depth lanes ------------------------------------------------
+    # The arena is painted flat, so depth has to be staged: a rival that is
+    # "behind" the duel stands higher on the plate and is drawn smaller. Without
+    # this the four men are a row of cardboard cut-outs on one line.
+    hero.z = 0.0
+    a.z = -0.85          # blue, stalking from the back
+    b.z = 0.45           # teal, half a step towards the lens
+    c.z = -0.35          # slate, between the two
 
     for tr in (hero, a, b, c):
         tr.keys = [k for k in tr.keys if k[0] <= 2.9]
 
-    hits = {3.96: ("clash", False), 4.64: ("hit", False), 5.42: ("block", False),
-            6.14: ("hit", False), 7.20: ("hit", False), 8.32: ("hit", False),
-            9.10: ("hit", False), 10.60: ("hit", False), 12.94: ("clash", True),
-            13.60: ("hit", False), 15.34: ("clash", True), 16.04: ("clash", True),
-            16.90: ("hit", False), 19.92: ("clash", True), 22.44: ("block", False),
-            23.30: ("final", False)}
+    STEEL_CUTS = {"blitz_dash_slash", "parry_riposte_spin", "spin_back_slash"}
+    BLUNT = {"spartan_front_kick", "sonic_thrust_pierce", "rising_dragon_slash",
+             "overhead_judo_slam", "air_meteor_slam", "dash_collar_grab",
+             "air_pursuit_slash"}
+
+    def kind_of(beat):
+        """What a beat sounds and sparks like, derived from the move itself.
+
+        The old table had to be kept in step with the choreography by hand, and
+        the moment the beat sheet changed it pointed at the wrong times. The move
+        now decides: steel on steel rings, a kick thuds, a grab is a body.
+        """
+        if beat.outcome == "whiff":
+            return None
+        if beat.outcome == "lethal":
+            return ("final", False)
+        if beat.outcome == "parry":
+            return ("clash", True)
+        if beat.move in STEEL_CUTS:
+            return ("clash", True)
+        if beat.move in BLUNT:
+            return ("hit", False)
+        return ("hit", False)
 
     def on_impact(beat):
-        kind, sparks = hits.get(round(beat.t, 2), ("hit", False))
+        k = kind_of(beat)
+        if k is None:
+            return
+        kind, sparks = k
         on = beat.defender if beat.outcome != "parry" else beat.attacker
         by = beat.attacker if beat.outcome != "parry" else beat.defender
         impact(beat.t, kind, beat.size, by=by or "red", on=on, sparks=sparks,
@@ -233,15 +308,18 @@ def build(set_name: str = "mountain") -> dict:
 
     compile_beats(beats, {t.name: t for t in (hero, a, b, c)}, guard=GUARD,
                   on_impact=on_impact, on_dust=dust,
-                  lanes={"blue": 1010.0, "teal": 1150.0, "slate": 1220.0},
+                  # one rival waits on each side of the arena: a crowd all on
+                  # one side is a chorus line, and it also means the hero never
+                  # has to turn round
+                  lanes={"blue": 588.0, "teal": 1152.0, "slate": 1228.0},
                   waiting=E_GUARD)
 
     # the walk-in ends where the first beat begins
     hero.key(3.40, READY, 596, "out")
-    a.key(3.40, E_GUARD, 944, "out")
-    b.key(3.40, E_GUARD, 1150, "out")
-    c.key(3.40, E_GUARD, 1220, "out")
-    a.key(3.60, E_GUARD, 970, "out")
+    a.key(3.40, E_GUARD, 588, "out")
+    b.key(3.40, E_GUARD, 1152, "out")
+    c.key(3.40, E_GUARD, 1228, "out")
+    a.key(3.60, E_GUARD, 700, "out")
     hero.key(24.20, READY, 1214, "out")
 
     # ------------------------------------------------------ 24.2-30 the sword
@@ -338,6 +416,32 @@ def build(set_name: str = "mountain") -> dict:
             kt, kp, kx, ke = own.keys[i]
             own.keys[i] = (kt, kp, kx + step * own.facing, ke)
 
+    # ---- who is the hero actually trading with, beat by beat
+    engagements = []
+    for b in beats:
+        opp = None
+        if b.attacker == "red":
+            opp = b.defender
+        elif b.defender == "red":
+            opp = b.attacker
+        if opp:
+            # the window is the contact, not the whole beat: during the wind-up
+            # of the *next* attack the hero is still dealing with this one, and
+            # a window that starts at the wind-up has both men "active" at once
+            engagements.append((b.t - 0.14, b.t + 0.30, opp))
+    engagements.sort()
+    # an exchange ends when the next one begins: a window that runs on into the
+    # following beat makes the hero "wrong" for still doing what he was told
+    engagements = [(t0, min(t1, engagements[i + 1][0] - 0.02)
+                    if i + 1 < len(engagements) else t1, name)
+                   for i, (t0, t1, name) in enumerate(engagements)]
+
+    # ---- the horizontal axis: every turn is decided by where the bodies are
+    from . import rig as _rig
+    _turns = _rig.drive_facings({"tracks": tracks, "hero": hero,
+                                 "engagements": engagements},
+                                t0=0.0, t1=30.2)
+
     # ---- impact positions: where the steel meets
     for e in impacts:
         t = e["t"]
@@ -365,6 +469,7 @@ def build(set_name: str = "mountain") -> dict:
     named = {tr.name: tr for tr in tracks}
     return {"set": set_name, "tracks": tracks, "hero": hero, **named, "impacts": impacts, "dust": dusts,
             "beats": beats, "move_types": sorted({b.move for b in beats}),
+            "turns": _turns, "engagements": engagements,
             "texts": texts, "cuts": cuts, "blade": True,
             "ink": (16.90, 23.30),
             "clock": Clock(impacts), "squash_at": squash_at,
