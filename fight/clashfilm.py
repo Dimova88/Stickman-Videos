@@ -888,10 +888,12 @@ def draw_impacts(cv: Canvas, impacts, t: float, overlay_flash: list,
                 py = cy + math.sin(ang) * dist + 30 * u * k * k
                 tail = (10.0 + 26.0 * spd) * u * (1.0 - k) ** 1.3
                 tx, ty = math.cos(ang), math.sin(ang)
-                cv.line((px - tx * tail * 0.5, py - ty * tail * 0.5),
-                        (px + tx * tail * 0.5, py + ty * tail * 0.5),
-                        max(1.0, (2.4 - 1.7 * k) * u), (252, 240, 214),
-                        alpha=int(230 * (1 - k) ** 1.1))
+                # tapered, and no caps: a round cap on a flying streak is a
+                # white bead at the tip, which reads as a dot-burst sticker
+                vfx._brush(cv, (px - tx * tail * 0.5, py - ty * tail * 0.5),
+                       (px + tx * tail * 0.5, py + ty * tail * 0.5),
+                       max(1.4, (2.6 - 1.8 * k) * u), 0.35,
+                       (252, 240, 214), alpha=int(230 * (1 - k) ** 1.1))
 
         # sparks: length decays with age. Not on a blade clash -- there the
         # real steel sparks are already on screen, and these straight rays read
@@ -908,7 +910,7 @@ def draw_impacts(cv: Canvas, impacts, t: float, overlay_flash: list,
                 p0 = (cx + math.cos(a) * r0, cy + math.sin(a) * r0)
                 p1 = (cx + math.cos(a) * (r0 + ln), cy + math.sin(a) * (r0 + ln))
                 cv.line(p0, p1, max(1.2, 2.4 * u * (1 - k)), (255, 250, 236),
-                        alpha=int(200 * (1 - k)))
+                        alpha=int(200 * (1 - k)), caps=False)
 
 
 def dust_particles(dusts, t: float, u: float, cx: float, cy: float):
@@ -1086,8 +1088,10 @@ def draw_weapon(cv: Canvas, track, t: float, sk) -> None:
     if not w:
         return
     sk = sk or track.skel(t)
-    # a man on the floor has dropped his sword: an airborne blade hanging off a
-    # wrist nobody can see reads as a floating white line
+    # a man on the floor has dropped his sword: a blade still welded to a wrist
+    # that is now lying on the ground reads as a white line floating over the
+    # corpse. Past the height where the head has gone below the shoulders the
+    # weapon is gone.
     if sk.head[1] > 470.0:
         return
     length = w.get("len", 92.0) * (track.pose_at(t).scale or 1.0)
@@ -1103,17 +1107,20 @@ def draw_weapon(cv: Canvas, track, t: float, sk) -> None:
     path = sum(math.hypot(tips[i + 1][0] - tips[i][0], tips[i + 1][1] - tips[i][1])
                for i in range(len(tips) - 1))
     power = min(1.0, max(0.0, (path - 26.0) / 150.0))
-    # the smear: the four-frame buffer of the *whole* blade, hilt to point, not
-    # just the point's path (a wire) — this is the crescent the swing is in
-    smear = []
+    # the smear: four frames of the blade's *angle*, reconstructed around the
+    # hilt of this frame (see steelblade.local_crescent). It is a crescent at
+    # any speed, which is what lets it survive a dash.
+    angs = []
+    speed = 0.0
     for k in (3, 2, 1, 0):
         tk = max(0.0, t - 0.024 * k)
         sx = track.skel(tk)
-        a = sx.tip_angle(sid)
-        smear.append((sx.pts[sid],
-                      steelblade.tip_of(sx.pts[sid], a, length)))
-    steelblade.blade_smear(cv, smear, min(1.0, power * 1.25))
-    steelblade.slash_trail(cv, tips, power)
+        angs.append(sx.tip_angle(sid))
+        if k == 1:
+            speed = math.hypot(sx.pts[sid][0] - sk.pts[sid][0],
+                               sx.pts[sid][1] - sk.pts[sid][1]) / 0.024
+    steelblade.local_crescent(cv, sk.pts[sid], angs, length, power)
+    steelblade.thrust_cone(cv, sk.pts[sid], angs[-1], length, speed, power)
     steelblade.draw_blade(cv, sk.pts[sid], ang, length,
                           glow=min(1.0, power * 1.4))
 
@@ -1230,13 +1237,16 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
     if prev["shot"] is cam_state["shot"]:
         dx, dy = shutter(cam_state, (prev["x"], prev["y"]), cv.unit())
         mag = (dx * dx + dy * dy) ** 0.5
-        if mag > 1.5:
-            # at 24 fps a full exposure would smear a whip into mush: a third of
-            # the frame's travel is what reads as speed instead of as a mistake
-            amt = min(1.0, 0.55 + 0.35 * cam_state["whip"])
-            scale = min(1.0, 34.0 / mag)
+        # the blur is *ramped in* over the first few pixels of travel and mixed
+        # by weight rather than switched on at a threshold: a shutter that pops
+        # from sharp to smeared between two frames is the single most obvious
+        # tell that a camera is being faked
+        if mag > 0.6:
+            amt = min(1.0, 0.45 + 0.30 * cam_state["whip"])
+            scale = min(1.0, 22.0 / mag)
+            ramp = min(1.0, (mag - 0.6) / 3.0)
             cv.img = directional(cv.img, dx * scale * amt, dy * scale * amt,
-                                 samples=8)
+                                 samples=8, weight=ramp)
 
     # bloom: only while something hot is on screen, because it is not free
     hot = any(0.0 <= t - e["t"] < 0.22 and not e.get("sparks")

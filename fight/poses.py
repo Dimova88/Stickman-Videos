@@ -354,7 +354,7 @@ FLIGHT = P(torso=-18, hip=42, foot_l=(-58, 22), foot_r=(-80, 34),
            a_up=-6, a_fore=-16, b_up=18, b_fore=-2, head=-20, air=58,
            spine=9.0, grip_a=0.2, grip_b=0.2)
 
-SLAM = P(torso=-6, hip=27, foot_l=(-88, 4), foot_r=(-112, 10),
+SLAM = P(torso=-4, hip=15, foot_l=(-92, 2), foot_r=(-116, 7),
          a_up=-16, a_fore=-26, b_up=6, b_fore=22, head=-14, air=0,
          spine=-6.0, toe_l=8.0, toe_r=6.0, grip_a=0.25, grip_b=0.25)
 
@@ -365,8 +365,12 @@ BOUNCE = P(torso=-20, hip=36, foot_l=(-74, 12), foot_r=(-98, 20),
 #: The sprawl of a body that has just stopped sliding: same rigid state, one
 #: knee up and one arm across the ground, so two men on the floor are not the
 #: same shape twice.
+# The second leg must not fold back across the first: at 64 units out of a
+# 142-unit leg the knee has no choice but to make a diamond, and a diamond is
+# the shape that reads as "melted". 86 leaves a bend and nothing more, and the
+# two legs sit on different lines so the body has depth even flat on its back.
 SPRAWL = P(torso=-174, hip=DOWN_HIP,
-           foot_l=(DOWN_FEET - 8.0, 6.0), foot_r=(DOWN_FEET - 44.0, 12.0),
+           foot_l=(DOWN_FEET - 8.0, 2.0), foot_r=(DOWN_FEET - 30.0, 5.0),
            a_up=16, a_fore=-40, b_up=34, b_fore=24, head=-6,
            spine=3.0, toe_l=8.0, toe_r=18.0, grip_a=0.18, grip_b=0.2)
 

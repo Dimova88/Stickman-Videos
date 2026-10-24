@@ -133,123 +133,116 @@ def build(set_name: str = "mountain") -> dict:
     c.key(2.80, E_GUARD, 1216, "out")
     hero.key(3.10, HIGH, 612, "snap")
 
-    # ------------------------------------------------------- 3.4-6.2 first cut
-    # A rushes, the swords meet, and the hero's counter takes it down
-    a.key(3.60, E_CHOP, 852, "in")
-    hero.key(3.92, PARRY, 620, "snap")
-    a.key(4.06, E_CHOP_END, 806, "snap")
-    impact(3.96, "clash", 1.15, by="blue", on="red", sparks=True)
-    hero.key(4.24, OVER, 622, "out")
-    a.key(4.30, E_STAG, 806, "out")
-    hero.key(4.62, CUT, 634, "snap")
-    a.key(4.66, PS.HIT_HEAD, 812, "snap")
-    impact(4.64, "hit", 1.0, by="red", on="blue", dmg=34.0)
-    a.key(5.10, PS.FALL, 826, "out")
-    a.key(5.56, PS.DOWN, 842, "out")
-    dust(5.60)
-    hero.key(5.10, READY, 628, "out")
+    # ================================================================ the fight
+    # Twenty seconds of choreography, compiled from CombatBeat objects instead
+    # of typed key by key (fight/beats.py). Each beat carries its own root
+    # motion, so the fight *travels*: the hero covers the arena, jumps an arc
+    # over a man, cuts back through the group and finishes on the far side.
+    RUN = P(torso=-72, foot_l=(34, 16), foot_r=(-28, 22),
+            a_up=72, a_fore=-16, b_up=40, b_fore=-40, head=-4, air=6)
+    GUARD = READY
 
-    # ------------------------------------------------------ 5.6-8.6 the duck
-    b.key(5.60, E_CHOP, 928, "in")
-    hero.key(6.10, DUCK, 640, "snap")
-    b.key(6.16, E_CHOP_END, 890, "snap")
-    impact(6.14, "block", 0.55, by="teal", on="red")
-    hero.key(6.44, CUT_HI, 646, "snap")
-    b.key(6.46, PS.HIT_HEAD, 894, "snap")
-    impact(6.44, "hit", 0.95, by="red", on="teal", dmg=30.0)
-    b.key(6.90, PS.FALL, 912, "out")
-    b.key(7.36, PS.DOWN, 928, "out")
-    dust(7.40)
-    hero.key(7.10, READY, 640, "out")
+    def travel(tr, t0, t1, x0, x1):
+        """A dash between exchanges: the feet are stepped by the footwork pass."""
+        tr.key(t0, RUN, x0, "out")
+        tr.key(t1, RUN, x1, "in")
 
-    # ------------------------------------------------- 7.4-11.4 two parries
-    c.key(7.20, E_CHOP, 1002, "in")
-    hero.key(7.70, PARRY, 646, "snap")
-    c.key(7.84, E_CHOP_END, 964, "snap")
-    impact(7.74, "clash", 1.0, by="slate", on="red", sparks=True)
-    hero.key(8.00, PARRY_LOW, 648, "snap")
-    c.key(8.30, E_CHOP, 952, "snap")
-    impact(8.32, "clash", 0.95, by="slate", on="red", sparks=True)
-    hero.key(8.60, OVER, 650, "out")
-    c.key(8.68, E_STAG, 958, "out")
-    hero.key(9.10, CUT_LO, 660, "snap")
-    c.key(9.12, PS.HIT_BODY, 962, "snap")
-    impact(9.10, "hit", 1.05, by="red", on="slate", dmg=40.0)
-    c.key(9.60, PS.FALL, 1100, "out")
-    c.key(10.10, PS.DOWN, 1180, "out")
-    dust(10.12)
-    hero.key(9.70, READY, 652, "out")
+    from .beats import CombatBeat, compile_beats
 
-    # ------------------------------------------------- 10.1-13.6 back up again
-    a.key(10.10, PS.DOWN, 842, "smooth")
-    a.key(10.60, PS.KNEEL, 848, "out")
-    a.key(11.30, E_GUARD, 836, "out")
-    b.key(10.20, PS.DOWN, 928, "smooth")
-    b.key(11.60, PS.KNEEL, 966, "out")
-    b.key(12.30, E_GUARD, 924, "out")
-    a.key(12.60, E_CHOP, 812, "in")
-    hero.key(12.90, PARRY, 656, "snap")
-    a.key(13.04, E_CHOP_END, 790, "snap")
-    impact(12.94, "clash", 1.0, by="blue", on="red", sparks=True)
-    hero.key(13.20, SPIN, 662, "out")
-    hero.key(13.60, CUT, 676, "snap")
-    a.key(13.62, PS.HIT_BODY, 796, "snap")
-    impact(13.60, "hit", 1.1, by="red", on="blue", dmg=45.0)
-    a.key(14.10, PS.FALL, 812, "out")
-    a.key(14.60, PS.DOWN, 828, "out")
-    dust(14.62)
-    hero.key(14.10, READY, 674, "out")
+    beats = [
+        # 1 — the opening blitz: he closes the distance instead of waiting
+        CombatBeat(3.96, "red", "blitz_dash_slash", "blue", lunge=176,
+                   from_x=596, to_x=772, defender_x=944, defender_end_x=1050,
+                   size=1.15),
+        # 2 — the follow-up rising cut lifts blue off his feet
+        CombatBeat(4.64, "red", "rising_dragon_slash", "blue", lunge=64,
+                   from_x=772, to_x=836, defender_x=1006, defender_end_x=1112,
+                   size=1.0, knock=150.0),
+        # 3 — teal steps in; the hero blocks on the move
+        CombatBeat(5.42, "teal", "parry_block", "red", lunge=-150,
+                   from_x=1160, to_x=1010, defender_x=836, outcome="parry",
+                   knock=36.0, size=0.6),
+        # 4 — the riposte: he turns through teal and ends on his far side
+        CombatBeat(6.14, "red", "parry_riposte_spin", "teal", lunge=150,
+                   from_x=836, to_x=1002, defender_x=1010, defender_end_x=1180,
+                   side_swap=True, size=1.1),
+        # 5 — and keeps going: a dash across the whole group
+        CombatBeat(7.20, "red", "blitz_dash_slash", "slate", lunge=140,
+                   from_x=1002, to_x=1140, defender_x=1152, defender_end_x=1180,
+                   size=0.95),
+        # 6 — slate gets the boot and leaves the floor
+        CombatBeat(8.32, "red", "spartan_front_kick", "slate", lunge=30,
+                   from_x=1140, to_x=1160, defender_x=1180, defender_end_x=1040,
+                   knock=170.0, size=1.0),
+        # 7 — blue is up again and lunges; teal answers from the other side
+        CombatBeat(9.10, "blue", "blitz_dash_slash", "red", lunge=-150,
+                   from_x=1112, to_x=980, defender_x=1160, outcome="parry",
+                   knock=30.0, size=1.0),
+        # 8 — the hero vaults back across the arena, over blue
+        CombatBeat(10.60, "red", "aerial_helm_breaker", "blue", lunge=-300,
+                   from_x=1160, to_x=860, defender_x=980, defender_end_x=1040,
+                   jump=126.0, side_swap=True, size=1.2),
+        # 9 — teal tries to take him in the air
+        CombatBeat(12.94, "teal", "sonic_thrust_pierce", "red", lunge=-140,
+                   from_x=1180, to_x=1040, defender_x=860, outcome="parry",
+                   knock=40.0, size=0.9),
+        # 10 — planted again, he cuts teal down for good
+        CombatBeat(13.60, "red", "blitz_dash_slash", "teal", lunge=130,
+                   from_x=860, to_x=990, defender_x=1040, defender_end_x=1120,
+                   outcome="lethal", knock=140.0, size=1.2),
+        # 11 — a beat of breathing room while slate comes back for more
+        CombatBeat(15.34, "slate", "blitz_dash_slash", "red", lunge=-160,
+                   from_x=1120, to_x=960, defender_x=990, outcome="parry",
+                   knock=34.0, size=1.0),
+        CombatBeat(16.04, "slate", "rising_dragon_slash", "red", lunge=-40,
+                   from_x=960, to_x=920, defender_x=990, outcome="parry",
+                   knock=30.0, size=1.0),
+        # 12 — the wide one: the hero jumps the last man and takes him down
+        CombatBeat(16.90, "red", "aerial_helm_breaker", "slate", lunge=140,
+                   from_x=920, to_x=1060, defender_x=1100, defender_end_x=1210,
+                   jump=118.0, outcome="lethal", knock=150.0, size=1.3),
+        # 13 — blue, the last one standing, locks blades
+        CombatBeat(19.92, "blue", "sonic_thrust_pierce", "red", lunge=-150,
+                   from_x=1150, to_x=1000, defender_x=1060, outcome="parry",
+                   knock=42.0, size=1.05, sparks=True),
+        # 14 — the push-off, then the finisher
+        CombatBeat(22.44, "red", "spartan_front_kick", "blue", lunge=34,
+                   from_x=1060, to_x=1094, defender_x=1000, defender_end_x=1010,
+                   knock=30.0, size=0.5),
+        CombatBeat(23.30, "red", "blitz_dash_slash", "blue", lunge=110,
+                   from_x=1094, to_x=1204, defender_x=1064, defender_end_x=980,
+                   outcome="lethal", knock=180.0, size=1.8, sparks=False),
+    ]
 
-    # ------------------------------------------- 14.6-19.7 two of them at once
-    b.key(14.80, E_CHOP, 900, "in")
-    c.key(14.30, PS.DOWN, 1180, "smooth")
-    c.key(15.20, E_GUARD, 1200, "out")
-    hero.key(15.30, PARRY, 682, "snap")
-    b.key(15.44, E_CHOP_END, 872, "snap")
-    impact(15.34, "clash", 1.0, by="teal", on="red", sparks=True)
-    c.key(15.60, E_CHOP, 1030, "in")
-    hero.key(16.00, PARRY_LOW, 688, "snap")
-    c.key(16.14, E_CHOP_END, 1000, "snap")
-    impact(16.04, "clash", 1.0, by="slate", on="red", sparks=True)
-    # the wide one: both of them in the same arc
-    hero.key(16.40, SPIN, 694, "out")
-    hero.key(16.90, CUT_HI, 712, "snap")
-    b.key(16.90, PS.HIT_HEAD, 884, "snap")
-    c.key(16.94, PS.HIT_HEAD, 1000, "snap")
-    impact(16.90, "hit", 1.25, by="red", on="teal", dmg=60.0)
-    impact(16.92, "hit", 1.25, by="red", on="slate", dmg=60.0)
-    b.key(17.40, PS.FALL, 1000, "out")
-    b.key(17.86, PS.DOWN, 1074, "out")
-    c.key(17.50, PS.FALL, 1150, "out")
-    c.key(18.00, PS.DOWN, 1230, "out")
-    dust(17.90)
-    hero.key(17.60, READY, 700, "out")
+    for tr in (hero, a, b, c):
+        tr.keys = [k for k in tr.keys if k[0] <= 2.9]
 
-    # --------------------------------------------------------- 18.0-25 the last
-    a.key(18.30, PS.KNEEL, 864, "out")
-    a.key(19.10, E_GUARD, 856, "out")
-    a.key(19.60, E_CHOP, 828, "in")
-    hero.key(19.90, LOCK, 692, "snap")
-    a.key(19.94, LOCK, 812, "snap")
-    impact(19.92, "clash", 1.05, by="blue", on="red", sparks=True)
-    hero.key(20.60, PUSH, 700, "out")
-    a.key(20.66, fade(E_STAG, torso=-72), 824, "out")
-    hero.key(21.10, OVER, 704, "out")
-    a.key(21.10, E_GUARD, 836, "out")
-    hero.key(21.90, HIGH, 708, "out")
-    a.key(22.10, E_CHOP, 852, "in")
-    hero.key(22.40, fade(DUCK, torso=-72), 712, "snap")
-    a.key(22.46, E_CHOP_END, 820, "snap")
-    impact(22.44, "block", 0.5, by="blue", on="red")
-    hero.key(22.80, OVER, 716, "out")
-    a.key(22.86, E_STAG, 824, "out")
-    hero.key(23.30, CUT, 726, "snap")
-    a.key(23.32, PS.HIT_HEAD, 832, "snap")
-    impact(23.30, "final", 1.8, by="red", on="blue", dmg=100.0)
-    a.key(23.90, PS.FALL, 858, "out")
-    a.key(24.60, PS.DOWN, 884, "out")
-    dust(24.64)
-    hero.key(24.20, READY, 720, "out")
+    hits = {3.96: ("clash", False), 4.64: ("hit", False), 5.42: ("block", False),
+            6.14: ("hit", False), 7.20: ("hit", False), 8.32: ("hit", False),
+            9.10: ("hit", False), 10.60: ("hit", False), 12.94: ("clash", True),
+            13.60: ("hit", False), 15.34: ("clash", True), 16.04: ("clash", True),
+            16.90: ("hit", False), 19.92: ("clash", True), 22.44: ("block", False),
+            23.30: ("final", False)}
+
+    def on_impact(beat):
+        kind, sparks = hits.get(round(beat.t, 2), ("hit", False))
+        on = beat.defender if beat.outcome != "parry" else beat.attacker
+        by = beat.attacker if beat.outcome != "parry" else beat.defender
+        impact(beat.t, kind, beat.size, by=by or "red", on=on, sparks=sparks,
+               dmg=100.0 if beat.outcome == "lethal" else 18.0 * beat.size)
+
+    compile_beats(beats, {t.name: t for t in (hero, a, b, c)}, guard=GUARD,
+                  on_impact=on_impact, on_dust=dust,
+                  lanes={"blue": 1010.0, "teal": 1150.0, "slate": 1220.0},
+                  waiting=E_GUARD)
+
+    # the walk-in ends where the first beat begins
+    hero.key(3.40, READY, 596, "out")
+    a.key(3.40, E_GUARD, 944, "out")
+    b.key(3.40, E_GUARD, 1150, "out")
+    c.key(3.40, E_GUARD, 1220, "out")
+    a.key(3.60, E_GUARD, 970, "out")
+    hero.key(24.20, READY, 1214, "out")
 
     # ------------------------------------------------------ 24.2-30 the sword
     hero.key(25.10, fade(READY, torso=-84), 716, "out")
@@ -274,30 +267,14 @@ def build(set_name: str = "mountain") -> dict:
         t = 0.0
         while t <= DURATION:
             hs = hero.skel(t).head
-            for f in foes:
-                if lie(f, t):
-                    continue
-                gap = f.skel(t).head[0] - hs[0]
-                want = 196.0 if t < 24.0 else 260.0
-                if gap < want:
-                    push = (want - gap) * 0.25
-                    for tr, sgn in ((hero, -1.0), (f, 1.0)):
-                        if lie(tr, t):
-                            continue
-                        ks = tr.keys
-                        best = min(range(len(ks)), key=lambda i: abs(ks[i][0] - t))
-                        if abs(ks[best][0] - t) > 0.35:
-                            continue
-                        kt, kp, kx, ke = ks[best]
-                        ks[best] = (kt, kp, kx + sgn * push, ke)
             # and the enemies must not stack into one silhouette either
             for i, f1 in enumerate(foes):
                 for f2 in foes[i + 1:]:
                     if lie(f1, t) or lie(f2, t):
                         continue
                     d = abs(f2.skel(t).head[0] - f1.skel(t).head[0])
-                    if d < 132.0:
-                        push = (132.0 - d) * 0.2
+                    if d < 168.0:
+                        push = (168.0 - d) * 0.25
                         for tr, sgn in ((f1, -1.0), (f2, 1.0)):
                             ks = tr.keys
                             best = min(range(len(ks)), key=lambda i: abs(ks[i][0] - t))
@@ -306,6 +283,12 @@ def build(set_name: str = "mountain") -> dict:
                             kt, kp, kx, ke = ks[best]
                             ks[best] = (kt, kp, kx + sgn * push, ke)
             t += 0.1
+
+    # ---- and nobody leaves the painted arena: every key is clamped to the
+    # strip of ground the plate actually covers
+    for tr in tracks:
+        tr.keys = [(kt, kp, max(520.0, min(1240.0, kx)), ke)
+                   for kt, kp, kx, ke in tr.keys]
 
     # ---- reach: step the attacker in until the *tip* is on the target
     #
@@ -381,6 +364,7 @@ def build(set_name: str = "mountain") -> dict:
 
     named = {tr.name: tr for tr in tracks}
     return {"set": set_name, "tracks": tracks, "hero": hero, **named, "impacts": impacts, "dust": dusts,
+            "beats": beats, "move_types": sorted({b.move for b in beats}),
             "texts": texts, "cuts": cuts, "blade": True,
             "ink": (16.90, 23.30),
             "clock": Clock(impacts), "squash_at": squash_at,

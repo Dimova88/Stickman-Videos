@@ -57,6 +57,9 @@ python3 -m venv .venv
 # audit the rig: limb stretch, bodies on the floor, depth-of-field jumps
 .venv/bin/python tools/audit_rig.py --set steel-mountain
 
+# audit the *film*: beat sheet, root motion, crowd stacking, zoom, impact frames
+.venv/bin/python tools/audit_film.py --set steel-mountain
+
 # look at the soundtrack: levels per section, spectra, spectrogram
 .venv/bin/python tools/audio_report.py --set steel-mountain
 
@@ -93,6 +96,7 @@ python3 -m venv .venv
 | `fight/clashfilm.py` | the Mountains Clash renderer: landscape crop, trails, impacts, dust, HUD, procedural audio, FFmpeg pipe |
 | `tools/pose_sheet.py` | renders the whole pose library to one contact sheet — the tool used to check anatomy |
 | `tools/audit_rig.py` | measures the invariants in `AGENT_INSTRUCTIONS.md` on the drawn skeleton: limb length, bodies on the floor, depth-of-field jumps. Exits non-zero so it can gate a render |
+| `tools/audit_film.py` | the film-level gate: number of beats and move types, side swaps, root-motion span, frames with stacked heads, zoom range, ink impact frames. Passing the anatomy check while leaving the old keyframes in place is exactly the shortcut this exists to catch |
 | `assets/mountain_background.png` | 1376×768 painted mountain arena (generated for this project, no third-party art) |
 
 ### The choreography, beat by beat
@@ -211,6 +215,55 @@ python tools/render_clash.py --set desert --out renders/desert_clash_720p.mp4
    segments are concatenated with `-c copy`, then the WAV is muxed in as
    192 kbps AAC with `+faststart`. `--preset/--crf/--tune` override the
    defaults.
+
+### The beat engine (*fight/beats.py*)
+
+A fight is a list of `CombatBeat`s, not a pile of keys. Each beat names the
+attacker, the move, the defender, the outcome, and how far the body travels
+(`lunge`), how high it jumps (`jump`), whether it crosses to the far side
+(`side_swap`) and how hard the defender is thrown (`knock`). `compile_beats()`
+then writes the same four phases for every one of them — coil back, 80 % of the
+distance in two frames, a snapped hold on contact, then recovery — and steps the
+feet through `footwork` because the pelvis moved, not because a key said so.
+
+Two rules live in the compiler that used to be enforced by hand and were
+therefore skipped:
+
+* **the free arm counterweights** every wind-up and follow-through, so no hand
+  ever sits frozen at the chin;
+* **two bodies need their own air** — a beat that closes to 8 px between the
+  pelvises is clamped to `MIN_GAP = 96`, because at 8 px two stickmen are one
+  four-armed creature, and that is what "stacked enemies" looks like from the
+  inside.
+
+The blade film is compiled from **16 beats across 7 move types with 2 side
+swaps and 3 lethal knockdowns**, and `tools/audit_film.py` measures exactly that
+on the built timeline.
+
+### The smear survives the dash (*fight/steelblade.py*)
+
+The old trail was the band between where the tip was and where it is now, in
+world coordinates. Standing still that is a crescent; dashing 200 px it is a
+parallelogram the size of the arena — the "sheet of white paper". Round 6 fixed
+it the wrong way, by switching the trail off whenever the weapon translated,
+which silenced it on precisely the dash and lunge attacks that need it.
+
+`local_crescent()` rebuilds the swing in **local polar space about the current
+hilt**: only the *angle history* is interpolated, both edges are arcs of the same
+circle, and the band widens from a whisker at the tail to a blade-width at the
+head. It is a crescent at any body speed, and a 250 px lunge cannot widen it by
+a pixel. A thrust has no sweep to draw, so `thrust_cone()` gives it a needle of
+compressed air instead — gated on *tip speed*, never on translation.
+
+### The camera is dragged, not attached (*fight/camera.py*)
+
+The follow used to be a linear lag: the frame tracked the action exactly, which
+is what a tripod on a dolly does. It is now a **second-order spring** (ζ = 0.74,
+stiffness scaled by the shot's `follow`), integrated one frame at a time so it is
+deterministic and rewindable by the probe tools: a dash yanks the frame, the
+frame overshoots by about two percent, and settles. The shutter blur is mixed in
+by weight over the first few pixels of travel instead of switching on at a
+threshold, and the directional shake rides the animation clock.
 
 ### Beat sheet
 
@@ -783,6 +836,17 @@ version was one of distance, not of drawing: three rivals spent the film
 shoulder to shoulder, so the two who are not attacking now stand in their own
 lanes, bodies on the floor hold a rigid low pose instead of melting into it, and
 the plate is mixed into bokeh by depth instead of snapping in at a threshold.
+
+The sakuga round is the one that matters. The film was not slow because a pose
+was wrong; it was slow because the choreography had never been re-compiled from
+beats — root motion, jumps and side swaps were all missing, and the audit only
+ever measured limbs, so it passed. `fight/beats.py` now owns attack timing
+(16 beats, 7 move types, 2 side swaps, 3 knockdowns through `ragdoll.knockdown`),
+`steelblade.local_crescent` draws the smear in polar space about the current hilt
+so a dash keeps its trail, the camera follows on a spring, and
+`tools/audit_film.py` measures the beat sheet, the root motion, the crowd and the
+zoom range on the built timeline — an anatomy-only pass is no longer a way to
+call this done.
 
 The sound is no longer a loop: layered foley (whooshes tuned by limb weight,
 dirt footsteps read off the rig, flesh with sub drops, inharmonic steel, sonic

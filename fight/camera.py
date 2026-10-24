@@ -214,17 +214,60 @@ def anchor_point(scene, shot, t: float, zoom: float):
     return ((sa.head[0] + sb.head[0]) * 0.5, y)
 
 
+#: the follow spring, per shot. The camera is not *attached* to the action, it
+#: is dragged behind it by a spring with mass: a 150 px dash does not pan the
+#: frame, it yanks it — and then the frame overshoots by two percent and settles.
+#: That overshoot is the whole difference between a tripod that slides and an
+#: operator with a shoulder rig.
+_SPRING = {}
+
+
+def _shot_index(scene, shot) -> int:
+    for i, s in enumerate(shots_of(scene)):
+        if s is shot:
+            return i
+    return -1
+
+
+def _spring_x(scene, shot, t: float, base_zoom: float) -> tuple[float, float]:
+    """Frame-by-frame semi-implicit integration of the follow spring.
+
+    It has to be integrated in frame order to be deterministic, so the state is
+    memoised per shot and extended one frame at a time; asking for an earlier
+    frame than the memo reaches rewinds it, which is what the probe tools do.
+    """
+    idx = _shot_index(scene, shot)
+    follow = float(shot.get("follow", 0.0))
+    if idx < 0 or follow <= 0.0:
+        return anchor_point(scene, shot, t, base_zoom)
+    key = (id(scene), idx)
+    n = max(0, int(round((t - shot["t0"]) / FRAME)))
+    st = _SPRING.get(key)
+    if st is not None and n < st["n"]:
+        st = None
+    if st is None:
+        x, y = anchor_point(scene, shot, shot["t0"], base_zoom)
+        st = {"n": 0, "x": x, "y": y, "vx": 0.0, "vy": 0.0}
+        _SPRING[key] = st
+    w = 9.0 * follow                    # stiffness: how hard it chases
+    z = 0.74                            # damping: under 1, so it overshoots once
+    while st["n"] < n:
+        st["n"] += 1
+        tt = shot["t0"] + st["n"] * FRAME
+        tx, ty = anchor_point(scene, shot, tt, base_zoom)
+        st["vx"] += (w * w * (tx - st["x"]) - 2.0 * z * w * st["vx"]) * FRAME
+        st["vy"] += (w * w * (ty - st["y"]) - 2.0 * z * w * st["vy"]) * FRAME
+        st["x"] += st["vx"] * FRAME
+        st["y"] += st["vy"] * FRAME
+    return st["x"], st["y"]
+
+
 def _shot_cam(scene, shot, t: float):
     """Camera state for one shot: centre, zoom, defocus."""
     span = max(1e-6, shot["t1"] - shot["t0"])
     u = smooth((t - shot["t0"]) / span)
     base = shot["zoom"] + (shot.get("z1", shot["zoom"]) - shot["zoom"]) * u
-    x, y = anchor_point(scene, shot, t, base)
-    if shot["follow"] > 0.0:
-        xl, yl = anchor_point(scene, shot, max(shot["t0"], t - LAG), base)
-        f = shot["follow"]
-        x = x + (xl - x) * LAG * 2.0 * f * 0.5
-        y = y + (yl - y) * LAG * 2.0 * f * 0.5
+    x, y = _spring_x(scene, shot, t, base)
     zoom = base
     # a punch-in at every contact inside the shot
     kick = shot.get("zoom_hit", 0.0)

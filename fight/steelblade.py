@@ -172,56 +172,65 @@ def slash_arc(cv, samples, length: float, power: float = 1.0,
     cv.polyline(outer, max(1.5, 2.4 * u), (255, 255, 255), alpha=a(215 * fade))
 
 
-def blade_smear(cv, samples, power: float = 1.0,
-                colour=(255, 255, 255)) -> None:
-    """The band the *whole blade* swept: a 4-frame buffer of (hilt, tip).
+def local_crescent(cv, hilt, angles, length: float, power: float = 1.0,
+                   subdivisions: int = 12, colour=(255, 255, 255)) -> None:
+    """The crescent a swing leaves, built in *local* polar space.
 
-    A trail sampled at the point alone is a wire. The smear is the polygon
-    between where the guard was and where the point was, frame by frame, so the
-    shape has the width of the sword at one end and the speed of the swing at
-    the other — which is what an animator draws when they draw a slash.
+    The bug this replaces: the smear used to be the band between where the tip
+    was and where it is now, in world coordinates. That is correct only while
+    the fighter stands still — the moment he dashes, the same band becomes a
+    parallelogram spanning the whole arena, which is the "sheet of white paper".
+    Gating it off during a dash was worse: the dash is exactly when a slash
+    should smear.
+
+    So the polygon is anchored to the hilt **now** and only the *angle history*
+    is interpolated: both edges are arcs of the same circle, so the shape is a
+    crescent whatever the body does, and a 250 px lunge cannot widen it by a
+    single pixel.
     """
-    if power <= 0.05 or len(samples) < 2:
+    if len(angles) < 2 or power <= 0.05:
         return
-    # A blade that turns more than ~50 degrees inside the buffer would fill the
-    # frame with a white sheet; the part of the swing that happened between two
-    # exposures is not *visible* air, it is speed. Keep the most recent samples
-    # inside that cone and let the rest of the motion read as a hard edge.
-    span = 0.90
-    end = math.atan2(samples[-1][1][1] - samples[-1][0][1],
-                     samples[-1][1][0] - samples[-1][0][0])
-    keep = [samples[-1]]
-    for h, tp in reversed(samples[:-1]):
-        a = math.atan2(tp[1] - h[1], tp[0] - h[0])
-        d = (end - a + math.pi) % math.tau - math.pi
-        if abs(d) > span:
-            break
-        keep.append((h, tp))
-    samples = list(reversed(keep))
-    if len(samples) < 2:
+    th_end = angles[-1]
+    d = (th_end - angles[0] + math.pi) % math.tau - math.pi
+    if abs(d) < 0.16:                     # a thrust, not a sweep
         return
-    # and a blade that only *translates* leaves no crescent: a sword carried
-    # forward is not a slash, and filling the band between two parallel paths
-    # is what turned a lunge into a sheet of white paper
-    angs = [math.atan2(tp[1] - h[1], tp[0] - h[0]) for h, tp in samples]
-    if max(angs) - min(angs) < 0.12:
+    d = max(-0.95, min(0.95, d))          # the visible air, not the whole snap
+    th0 = th_end - d
+    hx, hy = hilt
+    outer, inner = [], []
+    for i in range(subdivisions + 1):
+        u = i / subdivisions
+        a = th0 + d * u
+        taper = 0.72 + 0.28 * math.sin(u * math.pi * 0.5)
+        r_out = length * taper
+        # a crescent is a *band*: it starts as a whisker at the tail and widens
+        # toward the blade. Sizing the inner radius as a fraction of the blade
+        # (rather than a fraction of the band) is what turned it into a fan.
+        band = length * (0.07 + 0.17 * u)
+        r_in = max(0.0, r_out - band)
+        outer.append(cv.wp((hx + math.cos(a) * r_out, hy + math.sin(a) * r_out)))
+        inner.append(cv.wp((hx + math.cos(a) * r_in, hy + math.sin(a) * r_in)))
+    poly = outer + list(reversed(inner))
+    cv.polygon(poly, colour, alpha=int(118 * power))
+    # the leading edge is the steel itself: bright, and it ends at the hilt
+    cv.line(outer[-1], cv.wp(hilt), max(1.2, 2.0 * cv.unit()), colour,
+            alpha=int(200 * power))
+
+
+def thrust_cone(cv, hilt, angle: float, length: float, speed: float,
+                power: float = 1.0) -> None:
+    """A straight thrust leaves no arc, so it leaves a needle of compressed air."""
+    if speed < 700.0 or power <= 0.05:
         return
-    # ... and the *guard* has to stay where it was, or the band between two
-    # blade positions is a parallelogram across the frame instead of a crescent
-    axe = abs(samples[-1][0][0] - samples[0][0][0])
-    aye = abs(samples[-1][0][1] - samples[0][0][1])
-    blade_len = math.hypot(samples[-1][1][0] - samples[-1][0][0],
-                           samples[-1][1][1] - samples[-1][0][1]) or 1.0
-    if math.hypot(axe, aye) > 0.45 * blade_len:
-        return
-    tips = [cv.wp(t) for _h, t in samples]
-    hilts = [cv.wp(h) for h, _t in samples]
-    band = tips + list(reversed(hilts))
-    cv.polygon(band, colour, alpha=int(112 * power))       # air, not paint
-    # the leading edge is where the steel is: a brighter line along the last
-    # two tip samples and back down to the guard it is attached to
-    cv.polyline(tips + [hilts[-1]], max(1.4, 2.2 * cv.unit()),
-                (255, 255, 255), alpha=int(240 * power))
+    hx, hy = hilt
+    ux, uy = math.cos(angle), math.sin(angle)
+    nx, ny = -uy, ux
+    reach = length + min(46.0, speed * 0.03)
+    tip = cv.wp((hx + ux * reach, hy + uy * reach))
+    l = cv.wp((hx - ux * 18.0 + nx * 10.0, hy - uy * 18.0 + ny * 10.0))
+    r = cv.wp((hx - ux * 18.0 - nx * 10.0, hy - uy * 18.0 - ny * 10.0))
+    cv.polygon([tip, l, r], (255, 255, 255),
+               alpha=int(60 + 90 * min(1.0, power)))
 
 
 def slash_trail(cv, tips, power: float = 1.0, width: float = 13.0) -> None:

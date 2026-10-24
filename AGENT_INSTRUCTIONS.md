@@ -75,6 +75,39 @@ Every offensive move in the choreography timeline must be structured into 4 dist
 
 ---
 
+## PHASE 3b: THE ANTI-EVASION CLAUSE (read before touching a timing)
+
+A film that "works" is not evidence. The 30-second blade film passed the anatomy
+audit for three rounds while it still looked stiff, because the *audit only ever
+measured limbs*. These are the four shortcuts that were taken, and the rule that
+now forbids each one:
+
+1. **Leaving the old keys in place.** Rewriting the choreography and then keeping
+   the surrounding keyframes means the new beats land on a timeline authored for
+   the old ones: no root motion, no jumps, no side-swaps. *Rule:* a fight is
+   compiled from a beat sheet (`fight/beats.py`, ≥ 12 `CombatBeat`s, ≥ 5 distinct
+   moves, ≥ 2 side swaps). Retiming is not optional and "the film already works"
+   is not an argument.
+2. **Gating the smear off when the weapon translated.** The band was a world-space
+   polygon between old and new tip positions, so a 200 px dash turned it into a
+   sheet of white paper; the fix applied was to disable the trail exactly on the
+   dash and lunge attacks. *Rule:* the crescent is reconstructed in **local polar
+   space about the current hilt** (`steelblade.local_crescent`). It is a crescent
+   at any body speed. Never re-add a translation gate; never suppress a trail on
+   a fast move.
+3. **A camera that slides instead of being dragged.** *Rule:* the follow is a
+   second-order spring (`camera._spring_x`, ζ = 0.74), so a dash yanks the frame
+   and it overshoots and settles. Shake is directional and rides the animation
+   clock.
+4. **A flat fall.** *Rule:* a knockdown is a ballistic flight, a bounce, a skid
+   and a body that stays down (`ragdoll.knockdown`), never three keys that rotate
+   a figure flat.
+
+**A round is finished only when `tools/audit_film.py` passes** — it measures the
+beat sheet, root motion span, crowd stacking, zoom range and impact frames on
+the *rendered* timeline, not just the limb lengths. An anatomy-only pass is not
+a completion criterion.
+
 ## PHASE 4: PRE-RENDER SELF-AUDIT CHECKLIST
 
 Before finalizing any video generation, verify the following invariants in your code:
@@ -83,6 +116,10 @@ Before finalizing any video generation, verify the following invariants in your 
 - [ ] Are there zero noses, mouths, eyebrows, or geometric human face close-ups in the render code?
 - [ ] Does every attack have distinct `windup`, `active` (with weapon/limb smear trail), `hitstop` (freeze frames), and `recovery` phases?
 - [ ] Is background blur continuous and subtle rather than snapping on and off?
+- [ ] Does the fight compile from a beat sheet, and does every lunge carry root motion?
+- [ ] Does the weapon smear survive the dash (local crescent, no translation gate)?
+- [ ] Is every knockdown ballistic, and does at least one body stay on the floor?
+- [ ] Are the waiting enemies in their own lanes, and does `tools/audit_film.py` pass?
 
 ---
 
@@ -99,9 +136,10 @@ constraint, never the file.
 | Root motion, stepping | `fight/footwork.py` (planted feet, stride, parabolic lift). Feet are authored as world targets in `P()` and solved, never drawn as raw angles |
 | `DOWN` / `DEAD` rigid state | `fight/poses.py` — `DOWN`, `SPRAWL`; `to_pose()` pins the pelvis and lays the feet out; horizontal motion decays through `ragdoll.reanchor()` |
 | Four-phase beats | keys + easings in `fight/steel.py` / `fight/clash.py`; hitstop and compression envelopes in `fight/impact.py`; the knockdown arc in `fight/ragdoll.py` |
-| Smear arcs | `fight/steelblade.py` — `slash_arc()` (4-sample ribbon between the tip path and a circle inside it) and `slash_trail()` |
+| Beat sheet | `fight/beats.py` — `CombatBeat`, `PRESETS`, `compile_beats()`; authored in `fight/steel.py`, measured by `tools/audit_film.py` |
+| Smear arcs | `fight/steelblade.py` — `local_crescent()` (the swing rebuilt in polar space about the **current** hilt: a crescent at any body speed) and `thrust_cone()` |
 | 2-frame impact frames | `fight/vfx.py` — `impact_frame_index()` decides, `impact_frame()` draws the inverted silhouettes plus 24 radial spikes |
-| Camera, depth of field | `fight/camera.py` (shots, `dof`, `roll`), `draw_background()` in `fight/clashfilm.py` (blur mixed by depth, never toggled) |
+| Camera, depth of field | `fight/camera.py` (shots, `dof`, `roll`, and the follow spring `_spring_x`), `draw_background()` in `fight/clashfilm.py` (blur mixed by depth, never toggled) |
 | Score and foley | `fight/sound.py` (`score()` derives every cue from the scene's own impact list) |
 
 The harness, the render commands and the probe snippets are in `README.md`.
