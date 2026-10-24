@@ -544,20 +544,9 @@ def draw_fighter(cv: Canvas, track, t: float) -> None:
         else:
             cap = _fist_pts(wrist, ang, PALM_R * 0.92)
         tp, tw = _tube_pts(list(zip(pts, widths)))
-        _limb(cv, [cv.wp(p) for p in tp], [w * u for w in tw], col, cap=[cv.wp(p) for p in cap])
+        _limb(cv, [cv.wp(p) for p in tp], list(tw), col, cap=[cv.wp(p) for p in cap])
         if grip <= 0.5:
             _hand_open(cv, cv.wp(wrist), ang, grip, col, u)
-        else:
-            # a knuckle crease, so the fist reads as a fist and not a mallet
-            r = FIST_R
-            centre = (wrist[0] + math.cos(ang) * r * 0.46,
-                      wrist[1] + math.sin(ang) * r * 0.46)
-            nx, ny = -math.sin(ang), math.cos(ang)
-            cv.line((centre[0] + math.cos(ang) * r * 0.55 + nx * r * 0.5,
-                     centre[1] + math.sin(ang) * r * 0.55 + ny * r * 0.5),
-                    (centre[0] + math.cos(ang) * r * 0.55 - nx * r * 0.5,
-                     centre[1] + math.sin(ang) * r * 0.55 - ny * r * 0.5),
-                    max(1.4, u * 1.9), dark, alpha=150, caps=False)
 
     def leg(sid_up: int, sid_lo: int, pitch: float, col):
         hip, knee, ankle = sk.starts[sid_up], sk.pts[sid_up], sk.pts[sid_lo]
@@ -605,7 +594,7 @@ def draw_fighter(cv: Canvas, track, t: float) -> None:
         if (capw[0][0] - wp[-1][0]) ** 2 + (capw[0][1] - wp[-1][1]) ** 2 > \
            (capw[-1][0] - wp[-1][0]) ** 2 + (capw[-1][1] - wp[-1][1]) ** 2:
             capw = capw[::-1]
-        _limb(cv, wp, [w * u for w in tw], col, cap=capw)
+        _limb(cv, wp, list(tw), col, cap=capw)
 
     # far limbs in the darker tone first: depth without an outline
     leg(7, 8, pose.pitch_a, dark)
