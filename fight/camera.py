@@ -56,7 +56,9 @@ SHOTS = (
     dict(t0=2.40, t1=5.10, anchor="action", zoom=1.14, z1=1.18, follow=1.0,
          dof=0.10, style="cut", ground=0.79),
     # wide again for the kicks: you need the whole body to read a sweep
-    dict(t0=5.10, t1=7.55, anchor="action", zoom=1.04, follow=0.7,
+    dict(t0=5.10, t1=6.30, anchor="high", zoom=0.94, z1=1.02, follow=0.6,
+         dof=0.0, style="cut", sqy=0.70),
+    dict(t0=6.30, t1=7.55, anchor="action", zoom=1.04, follow=0.7,
          dof=0.0, style="cut", ground=0.80),
     # the uppercut that drops blue
     dict(t0=7.55, t1=8.10, anchor="action", zoom=1.26, follow=1.0,
@@ -67,34 +69,48 @@ SHOTS = (
     dict(t0=9.55, t1=12.75, anchor="action", zoom=1.12, z1=1.20, follow=1.0,
          dof=0.10, style="cut", ground=0.79),
     # the clash of fists at 13.44 gets its own push, then the insert cuts in
-    dict(t0=12.75, t1=13.44, anchor="impact", zoom=1.30, follow=1.0,
-         dof=0.22, style="whip", ground=0.78, zoom_hit=0.12),
+    # over the shoulder: you are standing behind red, watching blue come in
+    dict(t0=12.75, t1=13.44, anchor="ots", ots="red", zoom=1.34, follow=1.0,
+         dof=0.34, style="cut", ground=0.78, zoom_hit=0.10),
     dict(t0=13.44, t1=13.88, anchor="action", zoom=1.10, follow=1.0,
          dof=0.0, style="cut", ground=0.80),
     dict(t0=13.88, t1=15.60, anchor="action", zoom=1.06, follow=0.8,
          dof=0.05, style="cut", ground=0.80),
     # the uppercut at 15.80 and red's fall: the camera drops with him
-    dict(t0=15.60, t1=16.30, anchor="action", zoom=1.22, follow=1.0,
-         dof=0.15, style="whip", ground=0.72, zoom_hit=0.10),
+    dict(t0=15.60, t1=15.80, anchor="rush", rush="blue", zoom=1.16, z1=1.62,
+         follow=1.0, dof=0.0, style="whip", fg=0.25),
+    dict(t0=15.80, t1=16.30, anchor="action", zoom=1.22, follow=1.0,
+         dof=0.15, style="cut", ground=0.72, zoom_hit=0.10),
     dict(t0=16.30, t1=17.45, anchor="down", zoom=1.42, fg=0.30, follow=1.0,
          dof=0.28, style="whip", ground=0.73, zoom_hit=0.05),
-    dict(t0=17.45, t1=18.95, anchor="action", zoom=1.10, z1=1.16, follow=1.0,
+    dict(t0=17.45, t1=17.80, anchor="action", zoom=1.10, follow=1.0,
+         dof=0.08, style="cut", ground=0.79),
+    dict(t0=17.80, t1=18.20, anchor="ots", ots="blue", zoom=1.34, follow=1.0,
+         dof=0.34, style="cut", ground=0.78, zoom_hit=0.08),
+    dict(t0=18.20, t1=18.95, anchor="action", zoom=1.12, z1=1.16, follow=1.0,
          dof=0.08, style="cut", ground=0.79),
     # blue goes down at 18.98
     dict(t0=18.95, t1=19.30, anchor="action", zoom=1.20, follow=1.0,
          dof=0.12, style="whip", ground=0.75, zoom_hit=0.08),
     dict(t0=19.30, t1=20.15, anchor="down", zoom=1.50, fg=0.30, follow=1.0,
          dof=0.30, style="whip", ground=0.73, zoom_hit=0.05),
-    dict(t0=20.15, t1=21.30, anchor="action", zoom=1.08, z1=1.14, follow=1.0,
+    dict(t0=20.15, t1=20.95, anchor="action", zoom=1.08, z1=1.14, follow=1.0,
          dof=0.06, style="cut", ground=0.80),
-    # the last exchange: the camera is inside it now
-    dict(t0=21.30, t1=23.40, anchor="action", zoom=1.18, z1=1.26, follow=1.0,
+    dict(t0=20.95, t1=21.40, anchor="ots", ots="blue", zoom=1.32, follow=1.0,
+         dof=0.32, style="cut", ground=0.78, zoom_hit=0.08),
+    # from above: the arena floor fills the frame and the bodies go short
+    dict(t0=21.40, t1=22.00, anchor="high", zoom=0.98, z1=1.06, follow=0.7,
+         dof=0.0, style="cut", sqy=0.68),
+    dict(t0=22.00, t1=23.40, anchor="action", zoom=1.18, z1=1.26, follow=1.0,
          dof=0.12, style="cut", ground=0.78, zoom_hit=0.07),
     dict(t0=23.40, t1=24.40, anchor="action", zoom=1.06, follow=0.9,
          dof=0.0, style="cut", ground=0.80),
+    # a fist at the lens, then the blow lands
+    dict(t0=24.40, t1=24.72, anchor="rush", rush="blue", zoom=1.18, z1=1.70,
+         follow=1.0, dof=0.0, style="cut", fg=0.25, zoom_hit=0.10),
     # the finisher, then its insert
-    dict(t0=24.40, t1=25.24, anchor="action", zoom=1.26, follow=1.0,
-         dof=0.20, style="whip", ground=0.76, zoom_hit=0.16),
+    dict(t0=24.72, t1=25.24, anchor="action", zoom=1.26, follow=1.0,
+         dof=0.20, style="cut", ground=0.76, zoom_hit=0.16),
     # the pull-back: the winner, and the body on the floor
     dict(t0=25.24, t1=30.20, anchor="winner", zoom=1.12, z1=1.02, follow=0.6,
          dof=0.0, style="whip", ground=0.80),
@@ -142,6 +158,23 @@ def anchor_point(scene, shot, t: float, zoom: float):
     kind = shot["anchor"]
     sa, sb = _pair(scene, t)
     y = _floor_y(shot, zoom) + shot.get("dy", 0.0)
+    if kind == "ots":
+        near = shot["ots"]
+        far = sb if near == "red" else sa
+        return (far.head[0] + (26.0 if near == "red" else -26.0), y)
+    if kind == "rush":
+        # the camera dives at the fist that is about to land, so the hand grows
+        # into the lens because the lens goes to it — no drawn stand-in
+        near = shot["rush"]
+        sk = sa if near == "red" else sb
+        far = (sb if near == "red" else sa).head
+        fist = min((sk.pts[4], sk.pts[6]),
+                   key=lambda p: (p[0] - far[0]) ** 2 + (p[1] - far[1]) ** 2)
+        # frame the fist *and* the head it is about to reach, so the dive reads
+        # as a punch closing in rather than a close-up of a floating hand
+        return (fist[0] * 0.35 + far[0] * 0.65, far[1] + 58.0)
+    if kind == "high":
+        return ((sa.head[0] + sb.head[0]) * 0.5, GROUND - 44.0)
     if kind == "down":
         name, hip, tr = _downed(scene, t)
         sk = sa if name == "red" else sb
@@ -210,7 +243,9 @@ def camera(scene, t: float, ta: float | None = None) -> dict:
     sx, sy = shake(scene["impacts"], ta)
     return {"x": x, "y": y, "zoom": zoom, "dof": dof, "shake_x": sx,
             "shake_y": sy, "whip": whip, "shot": shot,
-            "foreground": shot.get("fg", 1.0)}
+            "sqy": shot.get("sqy", 1.0),
+            "high": shot["anchor"] == "high",
+            "foreground": shot.get("fg", 0.0 if shot["anchor"] == "high" else 1.0)}
 
 
 # ----------------------------------------------------------------------- shake
@@ -241,6 +276,12 @@ def shake(impacts, t: float):
 
 
 def background_parallax(cam: dict, factor: float = 0.36) -> tuple[float, float]:
-    """Where the plate is cropped: it lags the camera, which is the depth cue."""
+    """Where the plate is cropped: it lags the camera, which is the depth cue.
+
+    Looking straight down there is no distance to lag: the floor is the floor,
+    so a high shot rides the camera one to one.
+    """
+    if cam.get("high"):
+        return cam["x"] + cam["shake_x"], cam["y"] + cam["shake_y"]
     return (DESIGN_W * 0.5 + (cam["x"] - DESIGN_W * 0.5) * factor + cam["shake_x"],
             DESIGN_H * 0.5 + (cam["y"] - DESIGN_H * 0.5) * factor * 0.55 + cam["shake_y"])

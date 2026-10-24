@@ -17,15 +17,21 @@ INK = (43, 43, 43)
 
 
 class Cam:
+    """Design space -> screen. ``sqy`` squashes vertically, which is how a high
+    camera is faked without a second projection: the figures are drawn shorter
+    than they are wide, exactly as a body looks from above."""
+
     def __init__(self, x: float = 480.0, y: float = 300.0, zoom: float = 1.0,
-                 shake_x: float = 0.0, shake_y: float = 0.0, roll: float = 0.0):
+                 shake_x: float = 0.0, shake_y: float = 0.0, roll: float = 0.0,
+                 sqy: float = 1.0):
         self.x, self.y, self.zoom = x, y, zoom
         self.sx, self.sy, self.roll = shake_x, shake_y, roll
+        self.sqy = sqy
 
     def to_screen(self, p, w: int, h: int):
         k = (w / DESIGN_W) * self.zoom
         return (w * 0.5 + (p[0] - self.x + self.sx) * k,
-                h * 0.5 + (p[1] - self.y + self.sy) * k)
+                h * 0.5 + (p[1] - self.y + self.sy) * k * self.sqy)
 
 
 class Canvas:

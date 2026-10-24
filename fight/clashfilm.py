@@ -18,6 +18,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from .camera import camera
+from .closeups import draw_ots
 from .layers import draw_foreground
 from .clash import (BLUE, BLUE_DARK, DESIGN_H, DESIGN_W, DURATION, FIG_SCALE, FPS,
                     GROUND, INK, RED, RED_DARK, STANCE, build)
@@ -30,6 +31,9 @@ ASSETS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))
                       "assets")
 SET_FILES = {"mountain": "mountain_background.png",
              "desert": "desert_background.png"}
+#: a top-down floor plate, for the shots from above
+GROUND_FILES = {"mountain": "ground_mountain.png", "desert": "ground_desert.png"}
+GROUND_FILE_ASPECT = 1.0                       # both generated plates are square
 SR = 44100
 
 FONT_DIR = "/usr/share/fonts/truetype/dejavu"
@@ -77,21 +81,91 @@ def _plate(path: str) -> Image.Image:
     baked into the plate rather than composited per frame: a full-frame alpha
     composite costs ~8 ms, and this way it is free.
     """
+    if isinstance(path, tuple):                 # ("high", set) -> composite
+        return _high_plate(path[1])
     key = ("plate", path)
     if _bg_cache.get("key") == key:
         return _bg_cache["plate"]
     from PIL import Image as _I
     src = _I.open(path).convert("RGB")
     # exact 16:9, so a crop at zoom 1 fills the frame instead of coming up a few
-    # pixels short on one axis (the painted plates are a hair wider than 16:9)
-    want = round(src.height * DESIGN_W / DESIGN_H)
-    if src.width != want:
-        x0 = (src.width - want) // 2
-        src = src.crop((x0, 0, x0 + want, src.height))
+    # pixels short on one axis. Cover-crop, not letterbox: the painted plates are
+    # a hair wider than 16:9, the generated ground plates are square, and a
+    # square source used to leave black bars down the sides.
+    want_w = round(src.height * DESIGN_W / DESIGN_H)
+    want_h = round(src.width * DESIGN_H / DESIGN_W)
+    if src.width > want_w:
+        x0 = (src.width - want_w) // 2
+        src = src.crop((x0, 0, x0 + want_w, src.height))
+    elif src.height > want_h:
+        y0 = (src.height - want_h) // 2
+        src = src.crop((0, y0, src.width, y0 + want_h))
     vig = vignette()
     if vig.size != src.size:
         vig = vig.resize(src.size, _I.LANCZOS)
     src = _I.alpha_composite(src.convert("RGBA"), vig).convert("RGB")
+    if os.path.basename(path).startswith("ground_"):
+        # a floor plate seen from straight above is lit flat and reads much
+        # brighter than the landscape it replaces, so it is pulled down and
+        # cooled a touch: the fighters have to be the brightest thing in shot
+        src = _I.merge("RGB", [ch.point(lambda v, f=f: int(v * f))
+                               for ch, f in zip(src.split(), (0.80, 0.81, 0.86))])
+    _bg_cache["plate"] = src
+    _bg_cache["key"] = key
+    return src
+
+
+def _high_plate(set_name: str) -> Image.Image:
+    """The plate for a high crane shot: the arena floor under a strip of sky.
+
+    A true top-down would need every limb drawn in a second projection, so the
+    high angles are a crane looking down the mountain instead: the painted
+    landscape stops at a horizon two fifths up and the cracked-rock floor fills
+    the rest, misted together so the seam never reads as a rectangle.
+    """
+    key = ("high", set_name)
+    if _bg_cache.get("key") == key:
+        return _bg_cache["plate"]
+    from PIL import Image as _I
+    w, h = DESIGN_W * 2, DESIGN_H * 2
+    far = _plate(os.path.join(ASSETS, SET_FILES.get(set_name, "mountain_background.png")))
+    floor = _plate(os.path.join(ASSETS, GROUND_FILES.get(set_name, "ground_mountain.png")))
+    horizon = int(h * 0.40)
+    out = Image.new("RGB", (w, h))
+    # sky: the top of the landscape, squashed a little (we are looking down it)
+    strip = far.resize((w, int(h * 0.52)), _I.BILINEAR).crop((0, 0, w, horizon))
+    out.paste(strip, (0, 0))
+    # the floor, cover-cropped and flattened so the rock reads as a plane
+    fh = h - horizon + int(h * 0.06)
+    fw = int(fh * GROUND_FILE_ASPECT)
+    if fw < w:
+        fh = int(w / GROUND_FILE_ASPECT)
+        fw = w
+    tile = floor.resize((fw, fh), _I.BILINEAR)
+    x0 = (fw - w) // 2
+    out.paste(tile.crop((x0, 0, x0 + w, fh)), (0, horizon - int(h * 0.06)))
+    # the seam: a soft band of haze in the set's own light
+    haze = Image.new("L", (1, h), 0)
+    band = int(h * 0.12)
+    for i in range(band):
+        y = horizon - band // 2 + i
+        if 0 <= y < h:
+            haze.putpixel((0, y), int(150 * math.sin(math.pi * i / band) ** 0.8))
+    haze = haze.resize((w, h), _I.BILINEAR)
+    tint = Image.new("RGB", (w, h), (226, 208, 188) if set_name == "mountain"
+                     else (232, 206, 172))
+    out = Image.composite(tint, out, haze.point(lambda v: int(v * 0.55)))
+    src = out
+    vig = vignette()
+    if vig.size != src.size:
+        vig = vig.resize(src.size, _I.LANCZOS)
+    src = _I.alpha_composite(src.convert("RGBA"), vig).convert("RGB")
+    if os.path.basename(path).startswith("ground_"):
+        # a floor plate seen from straight above is lit flat and reads much
+        # brighter than the landscape it replaces, so it is pulled down and
+        # cooled a touch: the fighters have to be the brightest thing in shot
+        src = _I.merge("RGB", [ch.point(lambda v, f=f: int(v * f))
+                               for ch, f in zip(src.split(), (0.80, 0.81, 0.86))])
     _bg_cache["plate"] = src
     _bg_cache["key"] = key
     return src
@@ -140,7 +214,9 @@ def draw_background(cv: Canvas, cam: dict, scene, w: int = DESIGN_W,
     a close one (the fighters are always sharp: the lens is on them)."""
     from .camera import background_parallax
     bx, by = background_parallax(cam)
-    bg = background(bx, by, cam["zoom"], w, h, scene["bg_path"])
+    # from above the painted landscape is not in shot at all: the floor is
+    bg = background(bx, by, cam["zoom"], w, h,
+                    scene["ground_path"] if cam.get("high") else scene["bg_path"])
     if cam["dof"] > 0.02:
         # bokeh the cheap way: blur a sixth-size copy and blow it back up. A
         # Gaussian on the full frame costs 24 ms; this costs 2 and reads softer
@@ -202,6 +278,8 @@ def scene(set_name: str = "mountain"):
     if set_name not in _scene_cache:
         sc = build(set_name)
         sc["bg_path"] = os.path.join(ASSETS, SET_FILES.get(set_name, "mountain_background.png"))
+        sc["ground_path"] = os.path.join(
+            ASSETS, GROUND_FILES.get(set_name, "ground_mountain.png"))
         _scene_cache[set_name] = sc
     return _scene_cache[set_name]
 
@@ -217,7 +295,14 @@ def shadow_box(cv: Canvas, sk, lift: float):
     cx = (min(xs) + max(xs)) * 0.5
     span = (max(xs) - min(xs)) * 0.5
     c = cv.wp((cx, GROUND - 2))
+    if cv.cam.sqy < 0.98:
+        # from above the shadow falls away from the body, long and to one side
+        c = (c[0] + 30.0 * cv.unit(), c[1] + 12.0 * cv.unit())
     rx = (26.0 + span * 0.86 + 18.0 * lift) * cv.unit() * sk.scale
+    if cv.cam.sqy < 0.98:
+        # from above the shadow is a pool at the feet, not a band across the
+        # floor: keep it under the body or the patch reads as a grey slab
+        rx *= 0.62
     lying = sk.pts[1][1] > GROUND - 74.0
     ry = rx * (0.085 if lying else (0.125 - 0.02 * min(lift, 1.0)))
     return (c[0] - rx, c[1] - ry, c[0] + rx, c[1] + ry)
@@ -225,7 +310,12 @@ def shadow_box(cv: Canvas, sk, lift: float):
 
 def shadow(ov: "Overlay", sk, lift: float) -> None:
     """A flat contact shadow: wide and faint under an airborne fighter."""
+    if ov.layer is None:
+        return
     alpha = int(max(9, 44 - 26 * lift))
+    if ov.cv.cam.sqy < 0.98:
+        # from above the shadow is the main thing separating a body from the rock
+        alpha = int(min(80, alpha * 1.5))
     ov.ellipse(shadow_box(ov.cv, sk, lift), fill=(20, 16, 14, alpha))
 
 
@@ -669,7 +759,8 @@ def star(cx, cy, r_out, r_in, n=7, rot=0.0):
     return pts
 
 
-def draw_impacts(cv: Canvas, impacts, t: float, overlay_flash: list) -> None:
+def draw_impacts(cv: Canvas, impacts, t: float, overlay_flash: list,
+                 bursts: bool = True) -> None:
     u = cv.unit()
     seen = set()
     for e in impacts:
@@ -693,7 +784,7 @@ def draw_impacts(cv: Canvas, impacts, t: float, overlay_flash: list) -> None:
             k = age / 0.10
             overlay_flash.append(int((58 if final else 46) * (1 - k) ** 2 * size))
 
-        if age < (0.42 if final else 0.26):
+        if bursts and age < (0.42 if final else 0.26):
             k = age / (0.42 if final else 0.26)
             grow = 1 - (1 - k) ** 2
             r = (16 + 30 * size) * u * (0.55 + 0.75 * grow) * (1 - 0.3 * k)
@@ -703,7 +794,7 @@ def draw_impacts(cv: Canvas, impacts, t: float, overlay_flash: list) -> None:
                        outline=INK)
 
         # radial particles, fixed seed per impact so the render is reproducible
-        if age < (0.60 if final else 0.42):
+        if bursts and age < (0.60 if final else 0.42):
             plife = 0.60 if final else 0.42
             k = age / plife
             rng = np.random.default_rng(int(e["t"] * 1000) % 99991)
@@ -910,7 +1001,9 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
     cam_state = camera(scene, t, ta)
     cv = Canvas(DESIGN_W, DESIGN_H,
                 Cam(cam_state["x"], cam_state["y"], cam_state["zoom"],
-                    cam_state["shake_x"], cam_state["shake_y"]))
+                    cam_state["shake_x"], cam_state["shake_y"],
+                    sqy=cam_state.get("sqy", 1.0)))
+    ots = cam_state["shot"].get("ots")
     # The animation clock: at every contact it stops for a few frames (the
     # hitstop) and then catches up at 2x, so nothing drifts over the film. The
     # whole painted world rides it — bodies, shadow, smear, dust, landscape and
@@ -950,13 +1043,20 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
         boxes.append(shadow_box(cv, sk, lifts[tr.name]))
     ov = Overlay(cv, (min(b[0] for b in boxes), min(b[1] for b in boxes),
                       max(b[2] for b in boxes), max(b[3] for b in boxes)))
-    for tr in order:
-        shadow(ov, heads[tr.name], lifts[tr.name])
-    ov.flush()
+    if ov.layer is not None:
+        for tr in order:
+            if ots and tr.name == ots:
+                continue
+            shadow(ov, heads[tr.name], lifts[tr.name])
+        ov.flush()
 
     for tr in order:
+        if ots and tr.name == ots:
+            continue
         trails(cv, tr, ta)
     for tr in order:
+        if ots and tr.name == ots:
+            continue
         draw_fighter(cv, tr, ta)
     cv.flush()
 
@@ -966,8 +1066,20 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
     # camera — the depth cue that a static plate can never give
     draw_foreground(cv, cam_state, scene["set"])
 
+    # over the shoulder: the fighter we are standing behind is a dark mass with
+    # a rim light, on whichever edge of the frame it is
+    if ots:
+        near = scene[ots]
+        far = scene["blue" if ots == "red" else "red"]
+        side = "left" if near.skel(ta).head[0] < far.skel(ta).head[0] else "right"
+        draw_ots(cv, side, near.colour)
+
+
+
     flash = []
-    draw_impacts(cv, scene["impacts"], t, flash)
+    # over the shoulder the contact happens behind (or beside) the near body, so
+    # the star burst would hang in the sky with nothing at its centre
+    draw_impacts(cv, scene["impacts"], t, flash, bursts=not ots)
     cv.flush()
 
     if flash:

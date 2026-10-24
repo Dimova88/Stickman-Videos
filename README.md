@@ -451,10 +451,38 @@ about where to look.
 | `down` | follows the fighter on the floor down — floor-level, close |
 | `impact` | the last impact point: the camera arrives on the blow |
 | `winner` | the one still standing, the body in the lower third |
+| `high` | straight down the arena: the rock floor fills the frame, bodies squashed |
+| `ots` | over the shoulder of the near fighter, who becomes a dark rim-lit mass |
+| `rush` | the lens dives at the fist that is about to land |
 
 Framing is expressed as `ground` (where the floor line sits, 0.72 = low camera,
 0.80 = level) instead of a hard-coded height, so a shot reads the same at any
-zoom. 19 shots in 30 s, 4.5 s of them close-ups.
+zoom. 25 shots in 30 s, 4.5 s of them close-ups.
+
+**Three angles that needed more than camera numbers:**
+
+* **From above (`high`, 5.1–6.3 s and 21.4–22.0 s).** A second top-down rock
+  plate (generated, `assets/ground_*.png`) replaces the landscape, and `Cam`
+  gained a vertical-only squash: a body seen from above is *shorter*, not
+  smaller, so `sqy = 0.70` compresses the vertical scale alone while the camera
+  zooms normally. The plate is cover-cropped like the landscape (a square source
+  used to letterbox the frame) and pulled down ~20 % in level so the fighters
+  stay the brightest thing in shot; the contact shadow shrinks to a pool at the
+  feet and darkens, because from above the shadow is what separates a body from
+  the rock.
+* **Over the shoulder (`ots`, 12.75–13.44, 17.8–18.2, 20.95–21.4 s).** The near
+  fighter is *not drawn*: a blurred patch (head, neck, shoulder running out of
+  the bottom corner) is composited over the finished frame with a warm rim light,
+  the head is half the frame tall, and the fighter is chosen by whose head is
+  nearer the frame edge. The punch then disappears behind the shoulder, which is
+  the whole point of the angle.
+* **Foreshortened punch (`rush`, 15.6–15.8 and 24.4–24.72 s).** A drawn fist
+  rushing the lens was tried three times and read as a blue blob every time —
+  the flat side-on rig has no forearms to foreshorten. What works is the camera
+  doing it instead: the shot starts a hair wide and dives onto the striking
+  fist, aimed 65 % of the way to the head it is about to reach, over five frames.
+  Same effect, and the hand is still the hand the rest of the film is drawn
+  from.
 
 **Whip pans and punch-ins.** A shot marked `whip` flies from the previous
 camera position in 0.13 s and leaves a horizontal smear (the finished frame is
@@ -481,8 +509,12 @@ rides the animation clock, so it is frozen with the bodies during the hitstop.
   sixth-size copy and blowing it back up: 2 ms instead of the 24 ms a Gaussian
   on the full frame costs.
 
-Cost: a frame went from 10.4 ms to 20–35 ms (the per-frame plate resample plus
-the blur), and the 30 s master renders in **24 s on 2 vCPU** instead of 16.
+Cost: a frame went from 10.4 ms to 32–40 ms depending on the shot, and the 30 s
+master renders in **24.5 s on 2 vCPU** instead of 24.1 s for the lateral-only
+cut. Measured per angle: wide 33 ms, from above 24 ms (the ground plate needs no
+parallax layer), fist dive 40 ms, over the shoulder 40 ms — the shoulder patch is
+built once per shot (two Gaussian blurs of a 490×720 mask) and then costs a
+single masked paste per frame, which is 17 ms cheaper than rebuilding it.
 ### A second set: the desert
 
 The same fight re-staged on a new plate (`--set desert`), with its own title
@@ -512,7 +544,9 @@ figures carrying a bowed spine, articulated feet and hands, a face and speed
 deformation, three close-up inserts on the heaviest impacts (one of them an
 X-ray of the skull), hitstop and compression on every contact, a coiled wind-up
 before every landed blow, knockdowns that fly, bounce, skid and climb back up,
-and — new — no HUD at all, a 19-shot camera with whip pans, punch-ins,
-floor-level shots, directional shake and a parallax foreground layer. Next:
-foreshortened inserts (the fist coming at the lens), a top-down round, footwork,
-then the one-minute version with chained choreography and weapons.
+no HUD at all, and a 25-shot camera with whip pans, punch-ins, floor-level
+shots, directional shake and a parallax foreground layer — now including the
+three angles that needed new art: from straight above the arena floor, over the
+near fighter's shoulder, and a five-frame dive onto the fist that is about to
+land. Next: feet (running and skidding steps), then the one-minute version with
+chained choreography and weapons.
