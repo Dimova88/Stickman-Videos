@@ -19,7 +19,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from .clash import (BLUE, BLUE_DARK, DESIGN_H, DESIGN_W, DURATION, FPS, GROUND,
                     INK, RED, RED_DARK, build)
-from .insert import cut_at, draw_insert
+from .insert import CUTS as INSERTS, cut_at, draw_insert
 from .core import SEG, SEGMENT_ORDER, solve
 from .draw import Canvas, Cam
 
@@ -268,7 +268,7 @@ ARM_W = (11.6, 11.2, 8.8)          # shoulder, biceps, elbow
 FORE_W = (8.8, 8.4, 7.6)           # elbow, forearm, wrist
 THIGH_W = (13.4, 14.3, 10.4)       # hip, quad, knee
 SHIN_W = (10.4, 11.5, 6.4)         # knee, calf, ankle
-FOOT_LEN, FOOT_HEEL, FOOT_T = 27.0, 9.0, 11.5
+FOOT_LEN, FOOT_HEEL, FOOT_T = 22.0, 6.0, 8.6
 FIST_R, PALM_R, FINGER_L = 12.5, 8.6, 10.5
 STRETCH_MAX = 0.26                 # how much a limb may elongate while swinging
 
@@ -352,61 +352,96 @@ def _lerp(p, q, f):
     return (p[0] + (q[0] - p[0]) * f, p[1] + (q[1] - p[1]) * f)
 
 
-def _foot(cv: Canvas, ankle, tilt: float, colour, u: float, facing: int = 1,
-          alpha: int = 255) -> None:
-    """A wedge with a heel and a toe, hinged at the ankle.
+def _limb(cv: Canvas, pts, widths, colour, cap=None, alpha: int = 255) -> tuple:
+    """A whole limb as ONE polygon: the chain, then the hand or the foot.
 
-    Built in a local frame where +x is the way the fighter faces, then mirrored
-    (never rotated by pi — that turns the foot upside down). ``tilt`` lifts the
-    toe: 0 is flat on the floor, positive points the toe down, which is what a
-    kick does at full extension.
+    The old build drew the arm and its fist (or the leg and its foot) as two
+    shapes that merely met at the joint, so the join read as a seam — a notch
+    where the thin end of one piece hit the wide end of the other. Here the
+    silhouette is swept once: down one side of the chain, around the hand or
+    foot, and back up the other side. One polygon, no seam.
+
+    Returns the points actually drawn, so the caller can hang details off them.
     """
-    L, hb, t = FOOT_LEN * u, FOOT_HEEL * u, FOOT_T * u
+    n = len(pts)
+    left, right = [], []
+    for i in range(n):
+        if i == 0:
+            dx, dy = pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]
+            d = math.hypot(dx, dy) or 1.0
+            dx, dy = dx / d, dy / d
+        elif i == n - 1:
+            dx, dy = pts[-1][0] - pts[-2][0], pts[-1][1] - pts[-2][1]
+            d = math.hypot(dx, dy) or 1.0
+            dx, dy = dx / d, dy / d
+        else:
+            ax, ay = pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]
+            bx, by = pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]
+            la, lb = math.hypot(ax, ay) or 1.0, math.hypot(bx, by) or 1.0
+            dx, dy = ax / la + bx / lb, ay / la + by / lb
+            d = math.hypot(dx, dy) or 1.0
+            dx, dy = dx / d, dy / d
+        nx, ny = -dy, dx
+        hw = widths[i] * 0.5
+        left.append((pts[i][0] + nx * hw, pts[i][1] + ny * hw))
+        right.append((pts[i][0] - nx * hw, pts[i][1] - ny * hw))
+    poly = list(left)
+    if cap:
+        poly += list(cap)
+    poly += right[::-1]
+    cv.polygon(poly, colour, alpha=alpha)
+    return poly
+
+
+def _foot_pts(ankle, tilt: float, facing: int, drop: float):
+    """The foot silhouette, walked from the ankle round the toe and the heel.
+
+    ``drop`` is how far the sole sits below the ankle: a planted foot drops all
+    the way to the floor line, so the sole of every standing foot lands on the
+    same ground plane instead of hovering wherever the IK left the ankle.
+    """
+    L, hb, t = FOOT_LEN, FOOT_HEEL, FOOT_T
     rot = tilt * facing
     ca, sa = math.cos(rot), math.sin(rot)
-    # flat sole, heel at the back, instep high over the ankle, toe down the front
-    loc = [(-hb, 0.0), (-hb, -t * 0.72), (-hb * 0.40, -t * 1.00),
-           (L * 0.42, -t * 0.74), (L * 0.88, -t * 0.34), (L, -t * 0.06),
-           (L * 0.90, 0.0), (L * 0.10, 0.0)]
-    pts = []
-    for x, y in loc:
+
+    def w(x, y):
         x *= facing
-        pts.append((ankle[0] + x * ca - y * sa, ankle[1] + x * sa + y * ca))
-    cv.polygon(pts, colour, alpha=alpha)
-    cv.circle((ankle[0], ankle[1] - t * 0.22), t * 0.34, colour, width=0,
-              fill=colour, alpha=alpha)
+        return (ankle[0] + x * ca - y * sa, ankle[1] + x * sa + y * ca)
+
+    return [w(-hb * 0.52, -t * 0.16),          # back of the ankle
+            w(-hb * 0.14, -t * 0.50),          # Achilles into the instep
+            w(L * 0.34, -t * 0.46),            # instep crest
+            w(L * 0.74, -t * 0.26),            # top of the foot
+            w(L, -t * 0.06),                   # toe cap
+            w(L * 0.96, drop * 0.72),          # toe
+            w(L * 0.60, drop),                 # sole under the toes
+            w(L * 0.02, drop),                 # sole
+            w(-hb, drop * 0.66),               # heel
+            w(-hb * 0.98, t * 0.04)]           # back of the heel
 
 
-def _hand(cv: Canvas, wrist, ang: float, grip: float, colour, dark, u: float,
-          alpha: int = 255) -> None:
-    """A fist when the hand is closed, an open hand with fingers when it is not."""
+def _fist_pts(centre, ang: float, r: float):
+    """A closed fist as a ring of points, thrown forward of the wrist."""
     ca, sa = math.cos(ang), math.sin(ang)
-    grip = max(0.0, min(1.0, grip))
-    if grip > 0.5:
-        r = FIST_R * u * (0.94 + 0.10 * grip)
-        cx, cy = wrist[0] + ca * r * 0.30, wrist[1] + sa * r * 0.30
-        bump = [(cx + x * ca - y * sa, cy + x * sa + y * ca)
-                for x, y in ((r * 1.06, 0.0), (r * 0.46, r * 0.80),
-                             (-r * 0.62, r * 0.74), (-r * 1.02, 0.0),
-                             (-r * 0.62, -r * 0.74), (r * 0.46, -r * 0.80))]
-        cv.polygon(bump, colour, alpha=alpha)
-        cv.circle((cx, cy), r * 0.72, colour, width=0, fill=colour, alpha=alpha)
-        # the knuckle line: a crease facing the way the fist is thrown
-        cv.line((cx + r * 0.52 * ca - r * 0.42 * sa, cy + r * 0.52 * sa + r * 0.42 * ca),
-                (cx + r * 0.30 * ca + r * 0.52 * sa, cy + r * 0.30 * sa - r * 0.52 * ca),
-                2.4 * u, dark, alpha=int(alpha * 0.75), caps=False)
-    else:
-        open_k = 1.0 - grip / 0.5
-        palm = PALM_R * u
-        cv.circle(wrist, palm, colour, width=0, fill=colour, alpha=alpha)
-        for i, spread in enumerate((-0.30, -0.04, 0.22, 0.52)):
-            a2 = ang + spread * (0.4 + 0.6 * open_k)
-            ln = FINGER_L * u * (0.80 if i == 3 else 1.0) * open_k
-            tip = (wrist[0] + math.cos(a2) * (palm * 0.9 + ln),
-                   wrist[1] + math.sin(a2) * (palm * 0.9 + ln))
-            root = (wrist[0] + math.cos(a2) * palm * 0.6,
-                    wrist[1] + math.sin(a2) * palm * 0.6)
-            _capsule(cv, root, tip, 2.9 * u, 2.0 * u, colour, alpha)
+    out = []
+    for deg in (168, 120, 62, 0, -62, -120, -168):
+        a = math.radians(deg)
+        rr = r * (1.0 if abs(deg) < 100 else 0.86)
+        x, y = math.cos(a) * rr * 1.04, math.sin(a) * rr * 0.86
+        out.append((centre[0] + x * ca - y * sa, centre[1] + x * sa + y * ca))
+    return out
+
+
+def _hand_open(cv, wrist, ang: float, grip: float, colour, u: float,
+               alpha: int = 255) -> None:
+    """An open hand: the fingers fan out of the palm, which the limb already
+    covers, so only the fingers are drawn on top of the one-piece silhouette."""
+    open_k = 1.0 - grip / 0.5
+    for i, spread in enumerate((-0.30, -0.04, 0.22, 0.52)):
+        a2 = ang + spread * (0.4 + 0.6 * open_k)
+        ln = FINGER_L * u * (0.80 if i == 3 else 1.0) * max(0.15, open_k)
+        tip = (wrist[0] + math.cos(a2) * ln, wrist[1] + math.sin(a2) * ln)
+        _capsule(cv, wrist, tip, 4.6 * u, 3.0 * u, colour, alpha)
 
 
 def _head(cv: Canvas, c, r: float, facing: int, colour, dark, u: float,
@@ -495,12 +530,34 @@ def draw_fighter(cv: Canvas, track, t: float) -> None:
                   (wrist, FORE_W[2] * u)]
         joints, _ = _swing_deform(joints, vel, k, 1.0)
         sp = math.hypot(*vel) or 1.0
-        pts = [(p[0], p[1]) for p, _w in joints]
-        pts = _bend(pts, vel[0] / sp, vel[1] / sp, 2.6 * u * k)
-        widths = [w * u for _p, w in joints]
-        tp, tw = _tube_pts([(p, w / u) for p, w in zip(pts, widths)])
-        _tube(cv, [cv.wp(p) for p in tp], [w * u for w in tw], col)
-        _hand(cv, cv.wp(tp[-1]), sk.tip_angle(sid_lo), grip, col, dark, u)
+        pts = [p for p, _w in joints]
+        pts = _bend(pts, vel[0] / sp, vel[1] / sp, 2.2 * u * k)
+        widths = [w for _p, w in joints]
+        # the limb is drawn once, all the way through the hand
+        ang = sk.tip_angle(sid_lo)
+        cap = None
+        if grip > 0.5:
+            r = FIST_R * (0.94 + 0.10 * grip)
+            centre = (wrist[0] + math.cos(ang) * r * 0.46,
+                      wrist[1] + math.sin(ang) * r * 0.46)
+            cap = _fist_pts(centre, ang, r)
+        else:
+            cap = _fist_pts(wrist, ang, PALM_R * 0.92)
+        tp, tw = _tube_pts(list(zip(pts, widths)))
+        _limb(cv, [cv.wp(p) for p in tp], [w * u for w in tw], col, cap=[cv.wp(p) for p in cap])
+        if grip <= 0.5:
+            _hand_open(cv, cv.wp(wrist), ang, grip, col, u)
+        else:
+            # a knuckle crease, so the fist reads as a fist and not a mallet
+            r = FIST_R
+            centre = (wrist[0] + math.cos(ang) * r * 0.46,
+                      wrist[1] + math.sin(ang) * r * 0.46)
+            nx, ny = -math.sin(ang), math.cos(ang)
+            cv.line((centre[0] + math.cos(ang) * r * 0.55 + nx * r * 0.5,
+                     centre[1] + math.sin(ang) * r * 0.55 + ny * r * 0.5),
+                    (centre[0] + math.cos(ang) * r * 0.55 - nx * r * 0.5,
+                     centre[1] + math.sin(ang) * r * 0.55 - ny * r * 0.5),
+                    max(1.4, u * 1.9), dark, alpha=150, caps=False)
 
     def leg(sid_up: int, sid_lo: int, pitch: float, col):
         hip, knee, ankle = sk.starts[sid_up], sk.pts[sid_up], sk.pts[sid_lo]
@@ -515,26 +572,40 @@ def draw_fighter(cv: Canvas, track, t: float) -> None:
         pts = [p for p, _w in joints]
         pts = _bend(pts, vel[0] / sp, vel[1] / sp, 2.2 * u * k)
         widths = [w for _p, w in joints]
-        tp, tw = _tube_pts(list(zip(pts, widths)))
-        _tube(cv, [cv.wp(p) for p in tp], tw, col)
-        ank = tp[-1]
+        ank = pts[-1]
         planted = (pose.lift_a if sid_lo == 8 else pose.lift_b) <= 0.6
         fwd = 0.0 if pose.facing > 0 else math.pi
         if planted:
+            # the IK leaves the ankle a little above the floor, so the shin is
+            # carried down to where the ankle bone would be and the sole is put
+            # on the floor line: a foot of a fixed height, on the ground, always
+            sole = g - 3.0
+            drop = FOOT_T * 0.62
+            ank = (ank[0] + pose.facing * 1.6, sole - drop)
+            pts = pts[:-1] + [ank]
             tilt = 0.0
         else:
             # a foot in the air points along the shin only when the shin is
-            # already driving forward (a kick); a foot that is merely off the
-            # floor hangs flat instead of pointing at the ground behind
+            # already driving forward (a kick); a foot merely off the floor
+            # hangs flat instead of pointing at the ground behind
+            drop = FOOT_T * 0.62
             sh = sk.tip_angle(sid_lo)
             if math.sin(sh) < -0.15:
-                tilt = 1.48          # knee raised: the foot hangs off the ankle
+                tilt = 1.48
             else:
                 align = max(0.0, math.cos(sh - fwd))
                 rel = (sh - fwd + math.pi) % (2 * math.pi) - math.pi
                 rel = max(-0.35, min(1.30, rel))
                 tilt = rel * (0.18 + 0.82 * align) + pitch
-        _foot(cv, cv.wp(ank), tilt, col, u, pose.facing)
+        cap = _foot_pts(ank, tilt, pose.facing, drop)
+        tp, tw = _tube_pts(list(zip(pts, widths)))
+        wp = [cv.wp(p) for p in tp]
+        capw = [cv.wp(p) for p in cap]
+        # start the cap at the end of the left side, so the outline never crosses
+        if (capw[0][0] - wp[-1][0]) ** 2 + (capw[0][1] - wp[-1][1]) ** 2 > \
+           (capw[-1][0] - wp[-1][0]) ** 2 + (capw[-1][1] - wp[-1][1]) ** 2:
+            capw = capw[::-1]
+        _limb(cv, wp, [w * u for w in tw], col, cap=capw)
 
     # far limbs in the darker tone first: depth without an outline
     leg(7, 8, pose.pitch_a, dark)
@@ -561,13 +632,11 @@ def _lighten(colour, f: float):
 
 
 def trails(cv: Canvas, track, t: float, dt: float = 0.075) -> None:
-    """Smear frames: the fan a limb swept, in a light tint of the body colour.
+    """Smear frames: the fan the *forearm or shin* swept, in a light tint.
 
-    A wedge behind the fist is invisible on a straight punch, because the punch
-    travels along the arm — there the *stretch* inside draw_fighter carries the
-    speed. What a kick, a hook or a sweep needs is the arc it crossed: the fan
-    from the shoulder or the hip between where the limb was and where it is,
-    plus a short streak past the tip.
+    The fan is hung off the elbow or the knee, never off the shoulder or the hip:
+    a wedge all the way from the hip to the foot covers half the frame and reads
+    as a pane of glass lying on the floor. From the knee down it reads as speed.
     """
     if t < dt + 0.02:
         return
@@ -575,30 +644,31 @@ def trails(cv: Canvas, track, t: float, dt: float = 0.075) -> None:
     then = track.skel(t - dt)
     u = cv.unit() * now.scale
     tint = _lighten(track.colour, 0.40)
-    for sid in (4, 6, 8, 10):
-        pivot = now.starts[sid]
+    for sid, mid in ((4, None), (6, 5), (8, 7), (10, 9)):
+        pivot = now.pts[mid] if mid is not None else now.starts[sid]
         b = now.pts[sid]
         a = then.pts[sid]
         d = math.hypot(b[0] - a[0], b[1] - a[1])
         k = min(1.0, max(0.0, (d - 8.0) / 22.0))
         if k < 0.30:
             continue
+        # nothing to smear when the limb is standing on the floor
+        if b[1] > GROUND - 14 or pivot[1] > GROUND - 14:
+            continue
         P, A, B = cv.wp(pivot), cv.wp(a), cv.wp(b)
-        cv.polygon([P, A, B], tint, alpha=int(78 * k))
-        # the leading edge, fainter, so the streak has a soft end
+        cv.polygon([P, A, B], tint, alpha=int(64 * k))
         cv.polygon([P, B, ((B[0] + P[0]) * 0.5, (B[1] + P[1]) * 0.5)], tint,
-                   alpha=int(46 * k))
-        # a short streak past the tip, thrown further by the faster limbs
+                   alpha=int(40 * k))
         if k > 0.45:
-            f = 0.30 * (k - 0.45) / 0.55
+            f = 0.28 * (k - 0.45) / 0.55
             vx, vy = B[0] - A[0], B[1] - A[1]
             L = math.hypot(vx, vy) or 1.0
             tip = (B[0] + vx * f, B[1] + vy * f)
-            w = 4.6 * u * (0.4 + 0.6 * k)
+            w = 4.2 * u * (0.4 + 0.6 * k)
             nx, ny = -vy / L, vx / L
             cv.polygon([(B[0] + nx * w, B[1] + ny * w), tip,
                         (B[0] - nx * w, B[1] - ny * w)],
-                       tint, alpha=int(112 * k))
+                       tint, alpha=int(104 * k))
 
 
 # --------------------------------------------------------------------- effects
@@ -1007,6 +1077,30 @@ def thud(size=1.0, kind="hit", length=0.55, seed=0):
     return (sig / peak * (0.55 + 0.22 * min(size, 1.8))).astype(np.float32)
 
 
+def critical_hit(length=1.25, seed=71):
+    """The hit the film stops for: a sub drop, a crack, and a bone ring.
+
+    A normal punch is a thump and a smack. This is the same blow heard close up
+    and in slow motion: the body of it drops an octave, the crack is the first
+    contact, and the ring is what hangs in the air while the picture holds.
+    """
+    n = int(length * SR)
+    t = np.arange(n) / SR
+    rng = np.random.default_rng(seed)
+    sweep = 26.0 + 48.0 * np.exp(-t * 2.2)
+    sub = np.sin(2 * np.pi * np.cumsum(sweep) / SR) * np.exp(-t * 2.4)
+    sub += 0.35 * np.sin(2 * np.pi * np.cumsum(sweep * 0.5) / SR) * np.exp(-t * 1.6)
+    crack = _bandpass(rng.normal(0, 1, n).astype(np.float32), 900.0, 5400.0)
+    crack *= np.exp(-t * 42.0)
+    ring = np.zeros(n, np.float32)
+    for f, g in ((176.0, 0.55), (309.0, 0.32), (587.0, 0.20), (1184.0, 0.10)):
+        ring += g * np.sin(2 * np.pi * f * t + rng.uniform(0, 6.28)) * np.exp(-t * 2.6)
+    sig = sub * 0.95 + crack * 0.55 + ring * 0.38
+    sig *= _env(n, 0.0012, length * 0.55)
+    sig = np.tanh(sig * 1.5)
+    return (sig / (np.max(np.abs(sig)) or 1.0) * 0.95).astype(np.float32)
+
+
 def whoosh(dur=0.22, up=True):
     n = int(dur * SR)
     rng = np.random.default_rng(11)
@@ -1108,6 +1202,10 @@ def synth_audio(scene, duration=DURATION) -> np.ndarray:
     for tt_ in scene["dust"]:
         add(hits, thud(0.3, kind="body", length=0.22, seed=int(tt_ * 100)), tt_, 0.30,
             pan=-0.2)
+    # the three close-ups: a blow heard from inside the skull
+    for i, (start, dur, side, expr, kind) in enumerate(INSERTS):
+        add(hits, critical_hit(1.25 if kind == "xray" else 0.9, seed=71 + i), start,
+            1.05 if kind == "xray" else 0.85, pan=(-0.4 if side == "red" else 0.4))
 
     # ---- 5. side-chain: the bed ducks under every hit
     duck = np.ones(n, np.float32)
@@ -1120,6 +1218,16 @@ def synth_audio(scene, duration=DURATION) -> np.ndarray:
         seg = np.arange(i1 - i0) / SR
         env = np.minimum(1.0, seg / 0.012) * np.exp(-np.maximum(0.0, seg - 0.02) * 11.0)
         duck[i0:i1] = np.minimum(duck[i0:i1], 1.0 - depth * env)
+    # and the bed drops out entirely under a close-up: the picture has stopped,
+    # so the music must too, or the slow motion does not read as slow
+    for start, dur, side, expr, kind in INSERTS:
+        i0 = int(max(0, start - 0.02) * SR)
+        i1 = min(n, int((start + dur * 0.9) * SR))
+        if i0 >= i1:
+            continue
+        seg = np.arange(i1 - i0) / SR
+        env = np.minimum(1.0, seg / 0.010) * np.exp(-np.maximum(0.0, seg - 0.05) * 5.0)
+        duck[i0:i1] = np.minimum(duck[i0:i1], 1.0 - 0.70 * env)
     for ch in (0, 1):
         bed[:, ch] *= duck
 

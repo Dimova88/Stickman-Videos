@@ -361,8 +361,8 @@ def build(set_name: str = "mountain") -> dict:
     red.key(27.20, fade(PS.DOWN, head=-14), 646, "smooth")
     red.key(30.0, fade(PS.DOWN, head=-18), 644, "smooth")
 
-    title(24.90, 26.60, "K.O.", "ko")
-    title(26.10, 29.20, "BLUE WINS", "title")
+    title(25.24, 26.85, "K.O.", "ko")
+    title(26.85, 29.20, "BLUE WINS", "title")
     title(26.60, 29.30, words["sub"], "sub")
     title(0.0, 30.0, words["hud"], "hud")
 

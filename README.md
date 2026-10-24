@@ -281,45 +281,78 @@ Per-pose tuning (spine bow, toe pitch, grip) lives in one `_TUNE` table that is
 applied to the pose globals themselves, so `PS.GUARD` and `LIBRARY["guard"]`
 cannot drift apart.
 
-Cost and verification: 9.1 → **11.4 ms** per frame on the mountain set
-(9.2 → 12.4 on the desert) and a full 30 s render of **15.9 s** — the anatomy
-costs 2.3 ms a frame and nothing else. Against the previous master the finished
+Cost and verification: 9.1 → **10.4 ms** per frame on the mountain set (10.0 on
+the desert) and a full 30 s render of **15.2 s** — the anatomy costs about a
+millisecond a frame and nothing else. Against the previous master the finished
 film measures
 **SSIM 0.996**, the sky 44 dB — the background survived the animation change
 untouched — and 32.4 dB overall, which is the fighters: every one of those
 levels is the new anatomy, not an artefact.
 
+### One piece: limbs, feet and hands
+
+The first anatomy pass had a flaw you could see at a glance: the arm and its
+fist, the leg and its foot, were drawn as two shapes that merely *met* at the
+joint. The thin end of one landed against the wide end of the other and left a
+notch — a seam where a body should be continuous.
+
+A limb is now a single swept polygon (`_limb`): down one side of the joint
+chain, around the hand or the foot, and back up the other side. The fist is the
+cap of the arm, the foot is the cap of the leg, and the last width of the chain
+is the first width of the cap, so there is nothing to seam.
+
+The feet were also hovering. The IK could not reach the ground line — the leg
+segments are shorter than the hip height the poses are authored against — so
+every planted foot floated ~30 units above its own shadow. A planted foot now
+puts its **sole** on the floor line, whatever the IK left, and the shin is
+carried down to meet it. It is the silhouette that reads as standing, not the
+joint position.
+
+| before | after |
+| --- | --- |
+| arm + fist as two shapes, notch at the wrist | one polygon, fist is the arm's cap |
+| leg + foot as two shapes, notch at the ankle | one polygon, foot is the leg's cap |
+| sole wherever the IK put the ankle | sole on the floor line when planted |
+| splayed claw for every hand | fist when the pose grips, open hand otherwise |
+| smear fan from the hip | fan from the knee or elbow, and none near the floor |
+
 ### The close-up register
 
 A stickman reads a fight at a distance; a body blow at full speed does not. So
-the film now cuts: on the three heaviest impacts it leaves the wide shot for a
-fifth of a second and shows the face — and on the finisher, the skull
+the film cuts — **on the exact frame the blow lands**, not near it — and for half
+a second the simple figure is gone: a face, or on the finisher the skull
 (`fight/insert.py`).
 
 | cut | at | what it shows |
 | --- | --- | --- |
-| face | 9.56 s | blue takes red's uppercut: head snapped back, eyes wide, sweat thrown off the jaw |
-| face | 13.38 s | red at the fist clash, jaw set, brow down |
-| X-ray | 24.28 s | blue eats the finisher: the skull in bone, the fracture opening, a red bloom at the point of impact |
+| face | 13.44 s | red at the fist clash, jaw clenched, teeth bared |
+| face | 18.40 s | blue takes red's aerial kick on the head: eyes wide, mouth open, sweat thrown off |
+| X-ray | 24.72 s | red eats the finisher: skull in bone, the crack opening, a red bloom at the point of impact |
 
-In that register the figure is not a stickman any more. The head is a profile
-silhouette — brow ridge, nasion, nasal spine, maxilla, chin, jaw angle, occiput —
-with a white almond eye over a big amber iris, a heavy lid and a brow that slants
-down toward the nose. The neck carries the sterno-mastoid, the near shoulder a
-deltoid in light against the far one in shadow, and sweat leaves the jaw on every
-frame. Manga focus lines run from the head to the edge of frame, the camera
-pushes in across the cut, and the head snaps back off the blow and settles.
+The cut begins on the impact frame itself, so the blow and the close-up are the
+same instant. Everything inside it is in slow motion: the head is thrown to full
+recoil on the first frame, **holds** there while the camera pushes in, and only
+then settles. The music ducks away entirely under the hold, so the hit is the
+only thing left in the room.
 
-The X-ray draws that same profile as bone: orbit, nasal aperture, zygomatic arch,
-a row of teeth, a mandible hung under the maxilla, cervical bodies running off the
-bottom of the frame, and a crack that opens with the impact.
+The face is built from proportions, not detail: eyes on the vertical centre one
+eye apart, tall almonds with a heavy upper lash, amber iris with a dark rim,
+brows riding down toward the nose, mouth low, chin tapered, jaw shadow on the
+neck. The first version shaded the head with soft polygons and read as an
+amorphous blob; there is now exactly one shadow plane and it is under the jaw.
 
-Verified the honest way: outside the three cuts the new master is **bit-identical**
-to the previous one — PSNR ∞ (zero difference) on every sampled frame outside
-them, 43 dB on the couple of frames the encoder's rate control nudges after a cut
-— and inside them it is a new shot by design. Soundtrack bit-identical, runtime
-and stream layout unchanged, render still 16–17 s.
+The X-ray draws the same head as bone — cranium, orbits, nasal aperture,
+zygomatic arch, a row of teeth, a mandible hung under the maxilla, cervical
+bodies running off the bottom of the frame — and a hairline crack that opens from
+the point of impact.
 
+**The sound.** A close-up gets its own blow (`critical_hit`): a sub that drops an
+octave, the crack of first contact, and a bone ring that hangs while the picture
+holds. Measured on the finished mix, the three close-ups sit ~6 dB (face) and
+~9 dB (X-ray) above an ordinary landed punch, and the music is 70 % down under
+each of them.
+
+### A second set: the desert
 ### A second set: the desert
 
 The same fight re-staged on a new plate (`--set desert`), with its own title
@@ -328,8 +361,8 @@ and the zoom range are all derived from the scene.
 
 | | mountain | desert |
 | --- | --- | --- |
-| frame (720p, one core) | 11.4 ms | 12.4 ms |
-| full render, 2 cores | 15.9 s | **15.9 s** |
+| frame (720p, one core) | 10.4 ms | 10.0 ms |
+| full render, 2 cores | 15.2 s | **15.6 s** |
 | encode, same settings | 10.0 s | 10.4 s |
 | master size | 9.28 MB | 12.39 MB |
 | per-frame PSNR vs lossless source | median 47.9 dB | median 46.9 dB |
