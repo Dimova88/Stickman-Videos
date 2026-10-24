@@ -51,7 +51,13 @@ SEGMENT_ORDER = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
 @dataclass
 class Pose:
-    """One figure state: root position, torso angle, and limb angles 1..10."""
+    """One figure state: root position, torso angle, and limb angles 1..10.
+
+    On top of StykAnimate's ten angles a pose carries the things a stiff walker
+    cannot express: the bow of the spine, the pitch of each foot and whether a
+    hand is a fist. All of them are plain numbers so a pose is still one flat
+    vector and a blend is still one lerp.
+    """
 
     x: float = 0.0
     y: float = 0.0
@@ -64,19 +70,35 @@ class Pose:
     arm_k: float = 1.0
     leg_k: float = 1.0
     head_k: float = 1.0
+    #: how far the back bows away from the hip->neck chord, in rig units at
+    #: mid-back (positive = the chest opens toward the facing direction)
+    spine: float = 0.0
+    #: foot pitch in radians, + = toes up; planted feet ignore it
+    pitch_a: float = 0.0
+    pitch_b: float = 0.0
+    #: 0 = open hand, 1 = fist
+    grip_a: float = 0.0
+    grip_b: float = 0.0
+    #: how far each foot is off the floor (0 = planted), straight from the pose
+    lift_a: float = 0.0
+    lift_b: float = 0.0
 
     def copy(self, **kw) -> "Pose":
         return replace(self, **kw)
 
     def vec(self) -> np.ndarray:
-        return np.array([self.x, self.y, self.facing, self.scale, self.head_turn, *self.angles],
+        return np.array([self.x, self.y, self.facing, self.scale, self.head_turn, *self.angles,
+                         self.spine, self.pitch_a, self.pitch_b, self.grip_a,
+                         self.grip_b, self.lift_a, self.lift_b],
                         dtype=np.float64)
 
     @staticmethod
     def from_vec(v) -> "Pose":
         v = [float(a) for a in v]
         return Pose(x=v[0], y=v[1], facing=(1 if v[2] >= 0 else -1), scale=v[3],
-                    head_turn=v[4], angles=tuple(v[5:15]))
+                    head_turn=v[4], angles=tuple(v[5:15]), spine=v[15],
+                    pitch_a=v[16], pitch_b=v[17], grip_a=v[18], grip_b=v[19],
+                    lift_a=v[20], lift_b=v[21])
 
 
 def angles_of(*vals) -> tuple:
@@ -190,6 +212,15 @@ class Skeleton:
     head_r: float = 0.0
     facing: int = 1
     scale: float = 1.0
+    #: the back, sampled off a cubic Bezier between hip and neck
+    spine: list = field(default_factory=list)
+    #: direction of the neck, so the head can turn with the spine
+    neck_dir: float = 0.0
+
+    def tip_angle(self, sid: int) -> float:
+        """Absolute angle of the last segment of a limb, for hands and feet."""
+        a, b = self.starts[sid], self.pts[sid]
+        return math.atan2(b[1] - a[1], b[0] - a[0])
 
 
 def solve(pose: Pose) -> Skeleton:
@@ -210,9 +241,29 @@ def solve(pose: Pose) -> Skeleton:
         pts[sid] = end  # a circle's end is its far rim point; the chain stops there
     # StykAnimate draws a circle centred on (start+end)/2 with radius = length/2
     head_c = ((starts[2][0] + ends[2][0]) * 0.5, (starts[2][1] + ends[2][1]) * 0.5)
+
+    # the spine: a cubic between the hip and the neck that bows sideways by
+    # `pose.spine` units. The chord is untouched, so the shoulders, the head and
+    # both hips stay exactly where the choreography put them: the bow changes the
+    # silhouette, never the reach of a punch.
+    hip = pts[0]
+    neck = ends[1]
+    dx, dy = neck[0] - hip[0], neck[1] - hip[1]
+    n = math.hypot(dx, dy) or 1.0
+    nx, ny = -dy / n, dx / n
+    bow = pose.spine * pose.scale * pose.facing
+    c1 = (hip[0] + dx / 3.0 + nx * bow, hip[1] + dy / 3.0 + ny * bow)
+    c2 = (hip[0] + 2.0 * dx / 3.0 + nx * bow, hip[1] + 2.0 * dy / 3.0 + ny * bow)
+    spine = []
+    for i in range(9):
+        u = i / 8.0
+        m = 1.0 - u
+        spine.append((m * m * m * hip[0] + 3 * m * m * u * c1[0] + 3 * m * u * u * c2[0] + u * u * u * neck[0],
+                      m * m * m * hip[1] + 3 * m * m * u * c1[1] + 3 * m * u * u * c2[1] + u * u * u * neck[1]))
     return Skeleton(pts=ends, starts=starts, head=head_c,
                     head_r=SEG[2][2] * 0.5 * pose.scale * pose.head_k,
-                    facing=pose.facing, scale=pose.scale)
+                    facing=pose.facing, scale=pose.scale, spine=spine,
+                    neck_dir=math.atan2(spine[-1][1] - spine[-3][1], spine[-1][0] - spine[-3][0]))
 
 
 def plant(pose: Pose, ground: float, which=(8, 10)) -> Pose:

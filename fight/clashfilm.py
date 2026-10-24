@@ -257,24 +257,23 @@ def shadow(ov: "Overlay", sk, lift: float) -> None:
     ov.ellipse(shadow_box(ov.cv, sk, lift), fill=(20, 16, 14, alpha))
 
 
-# how a body is assembled: each chain is a smooth tube, not a row of segments
-CHAINS = (
-    # (points, root width, tip width) — rear leg, lead leg, spine, rear arm, lead arm
-    ((0, 7, 8), 12.5, 9.5),
-    ((0, 9, 10), 12.5, 9.5),
-    ((0, 1), 13.5, 12.0),
-    ((1, 3, 4), 10.0, 7.5),
-    ((1, 5, 6), 10.0, 7.5),
-)
+# ------------------------------------------------------------------- anatomy
+# A body is a set of tapered tubes with a width profile, not a row of sticks.
+# The numbers are rig units (the same space the poses are authored in):
+# deltoid and biceps wider than the elbow, quad wider than the knee, calf wider
+# than the ankle — that is all it takes for a limb to stop reading as a pipe.
+SPINE_W = (14.6, 13.2, 11.8, 11.1, 12.3, 13.9, 14.8, 13.4, 12.2)  # 9 samples
+ARM_W = (11.6, 11.2, 8.8)          # shoulder, biceps, elbow
+FORE_W = (8.8, 8.4, 7.6)           # elbow, forearm, wrist
+THIGH_W = (13.4, 14.3, 10.4)       # hip, quad, knee
+SHIN_W = (10.4, 11.5, 6.4)         # knee, calf, ankle
+FOOT_LEN, FOOT_HEEL, FOOT_T = 27.0, 9.0, 11.5
+FIST_R, PALM_R, FINGER_L = 12.5, 8.6, 10.5
+STRETCH_MAX = 0.26                 # how much a limb may elongate while swinging
 
 
-def _capsule(cv: Canvas, a, b, w0: float, w1: float, colour) -> None:
-    """A tapered bone with rounded ends, and no cap wider than the bone.
-
-    Limbs are drawn as a union of these plus a disc at each joint sized to the
-    bone there, so the silhouette bends smoothly and no circle shows up on the
-    elbow, the knee or the shoulder.
-    """
+def _capsule(cv: Canvas, a, b, w0: float, w1: float, colour, alpha: int = 255) -> None:
+    """A tapered bone with rounded ends, and no cap wider than the bone."""
     dx, dy = b[0] - a[0], b[1] - a[1]
     L = math.hypot(dx, dy) or 1.0
     nx, ny = -dy / L, dx / L
@@ -282,63 +281,323 @@ def _capsule(cv: Canvas, a, b, w0: float, w1: float, colour) -> None:
     cv.polygon([(a[0] + nx * r0, a[1] + ny * r0),
                 (b[0] + nx * r1, b[1] + ny * r1),
                 (b[0] - nx * r1, b[1] - ny * r1),
-                (a[0] - nx * r0, a[1] - ny * r0)], colour)
-    cv.circle(a, r0, colour, width=0, fill=colour)
-    cv.circle(b, r1, colour, width=0, fill=colour)
+                (a[0] - nx * r0, a[1] - ny * r0)], colour, alpha=alpha)
+    if r0 > 0.4:
+        cv.circle(a, r0, colour, width=0, fill=colour, alpha=alpha)
+    if r1 > 0.4:
+        cv.circle(b, r1, colour, width=0, fill=colour, alpha=alpha)
 
 
-def _chain(cv: Canvas, pts, w0: float, w1: float, colour) -> None:
+def _tube(cv: Canvas, pts, widths, colour, alpha: int = 255) -> None:
+    """Draw a chain as one smooth tube: capsule per span, disc at every joint."""
+    for i in range(len(pts) - 1):
+        _capsule(cv, pts[i], pts[i + 1], widths[i], widths[i + 1], colour, alpha)
+
+
+def _bend(pts, dirx: float, diry: float, k: float):
+    """Bow a chain: the joints lag behind the direction of travel.
+
+    This is the cheap half of squash & stretch — a swinging arm or leg arcs
+    instead of rotating like a compass needle.
+    """
+    if k <= 0.0 or len(pts) < 3:
+        return list(pts)
     n = len(pts) - 1
-    for i in range(n):
-        f0, f1 = i / n, (i + 1) / n
-        _capsule(cv, pts[i], pts[i + 1], w0 + (w1 - w0) * f0, w0 + (w1 - w0) * f1,
-                 colour)
+    out = [pts[0]]
+    for i in range(1, n):
+        f = 1.0 - abs(i / n - 0.5) * 1.1
+        out.append((pts[i][0] - dirx * k * f, pts[i][1] - diry * k * f))
+    out.append(pts[-1])
+    return out
+
+
+def _swing_deform(joints, vel, k: float, stretch: float):
+    """Elongate a limb along its own motion and thin it while it travels."""
+    if k <= 0.0:
+        return joints, 1.0
+    sx, sy = joints[0][0]
+    ex, ey = joints[-1][0]
+    dx, dy = ex - sx, ey - sy
+    L = math.hypot(dx, dy) or 1.0
+    vx, vy = vel
+    sp = math.hypot(vx, vy) or 1.0
+    align = max(0.0, (dx * vx + dy * vy) / (L * sp))
+    amt = STRETCH_MAX * stretch * k * align
+    vdir = (vx / sp, vy / sp)
+    out = []
+    for i, (p, w) in enumerate(joints):
+        f = i / (len(joints) - 1)
+        # stretch grows along the limb and reaches the tip
+        px = sx + (p[0] - sx) * (1 + amt * f)
+        py = sy + (p[1] - sy) * (1 + amt * f)
+        # and the joints trail a little behind the swing
+        drag = 3.2 * k * (1.0 - abs(f - 0.5) * 1.2) * (1 - f * 0.35)
+        out.append(((px - vdir[0] * drag, py - vdir[1] * drag), w * (1.0 - 0.22 * amt)))
+    return out, 1.0
+
+
+def _tube_pts(joints):
+    """Expand (point, width) joints into a dense chain so the tapers are smooth."""
+    pts, ws = [joints[0][0]], [joints[0][1]]
+    for (pa, wa), (pb, wb) in zip(joints, joints[1:]):
+        pts.append(((pa[0] + pb[0]) * 0.5, (pa[1] + pb[1]) * 0.5))
+        ws.append((wa + wb) * 0.5)
+        pts.append(pb)
+        ws.append(wb)
+    return pts, ws
+
+
+def _lerp(p, q, f):
+    return (p[0] + (q[0] - p[0]) * f, p[1] + (q[1] - p[1]) * f)
+
+
+def _foot(cv: Canvas, ankle, tilt: float, colour, u: float, facing: int = 1,
+          alpha: int = 255) -> None:
+    """A wedge with a heel and a toe, hinged at the ankle.
+
+    Built in a local frame where +x is the way the fighter faces, then mirrored
+    (never rotated by pi — that turns the foot upside down). ``tilt`` lifts the
+    toe: 0 is flat on the floor, positive points the toe down, which is what a
+    kick does at full extension.
+    """
+    L, hb, t = FOOT_LEN * u, FOOT_HEEL * u, FOOT_T * u
+    rot = tilt * facing
+    ca, sa = math.cos(rot), math.sin(rot)
+    # flat sole, heel at the back, instep high over the ankle, toe down the front
+    loc = [(-hb, 0.0), (-hb, -t * 0.72), (-hb * 0.40, -t * 1.00),
+           (L * 0.42, -t * 0.74), (L * 0.88, -t * 0.34), (L, -t * 0.06),
+           (L * 0.90, 0.0), (L * 0.10, 0.0)]
+    pts = []
+    for x, y in loc:
+        x *= facing
+        pts.append((ankle[0] + x * ca - y * sa, ankle[1] + x * sa + y * ca))
+    cv.polygon(pts, colour, alpha=alpha)
+    cv.circle((ankle[0], ankle[1] - t * 0.22), t * 0.34, colour, width=0,
+              fill=colour, alpha=alpha)
+
+
+def _hand(cv: Canvas, wrist, ang: float, grip: float, colour, dark, u: float,
+          alpha: int = 255) -> None:
+    """A fist when the hand is closed, an open hand with fingers when it is not."""
+    ca, sa = math.cos(ang), math.sin(ang)
+    grip = max(0.0, min(1.0, grip))
+    if grip > 0.5:
+        r = FIST_R * u * (0.94 + 0.10 * grip)
+        cx, cy = wrist[0] + ca * r * 0.30, wrist[1] + sa * r * 0.30
+        bump = [(cx + x * ca - y * sa, cy + x * sa + y * ca)
+                for x, y in ((r * 1.06, 0.0), (r * 0.46, r * 0.80),
+                             (-r * 0.62, r * 0.74), (-r * 1.02, 0.0),
+                             (-r * 0.62, -r * 0.74), (r * 0.46, -r * 0.80))]
+        cv.polygon(bump, colour, alpha=alpha)
+        cv.circle((cx, cy), r * 0.72, colour, width=0, fill=colour, alpha=alpha)
+        # the knuckle line: a crease facing the way the fist is thrown
+        cv.line((cx + r * 0.52 * ca - r * 0.42 * sa, cy + r * 0.52 * sa + r * 0.42 * ca),
+                (cx + r * 0.30 * ca + r * 0.52 * sa, cy + r * 0.30 * sa - r * 0.52 * ca),
+                2.4 * u, dark, alpha=int(alpha * 0.75), caps=False)
+    else:
+        open_k = 1.0 - grip / 0.5
+        palm = PALM_R * u
+        cv.circle(wrist, palm, colour, width=0, fill=colour, alpha=alpha)
+        for i, spread in enumerate((-0.30, -0.04, 0.22, 0.52)):
+            a2 = ang + spread * (0.4 + 0.6 * open_k)
+            ln = FINGER_L * u * (0.80 if i == 3 else 1.0) * open_k
+            tip = (wrist[0] + math.cos(a2) * (palm * 0.9 + ln),
+                   wrist[1] + math.sin(a2) * (palm * 0.9 + ln))
+            root = (wrist[0] + math.cos(a2) * palm * 0.6,
+                    wrist[1] + math.sin(a2) * palm * 0.6)
+            _capsule(cv, root, tip, 2.9 * u, 2.0 * u, colour, alpha)
+
+
+def _head(cv: Canvas, c, r: float, facing: int, colour, dark, u: float,
+          glow: float = 0.0, hurt: float = 0.0) -> None:
+    """The head: skull, jaw, and an anime eye under a hard brow.
+
+    A flat circle reads as a ball on a stick. Three shapes turn it into a face:
+    a jaw pushed toward the facing direction, a white eye lens with a dark iris,
+    and a brow that slants down toward the nose — the slant is the expression,
+    and it steepens when the fighter is swinging or taking a shot.
+    """
+    fx = facing
+    cv.circle(c, r, colour, width=0, fill=colour)
+    cv.circle((c[0] + fx * r * 0.17, c[1] + r * 0.34), r * 0.60, colour,
+              width=0, fill=colour)
+    # muzzle / brow ridge, so the profile has a nose instead of a smooth ball
+    cv.polygon([(c[0] + fx * r * 0.86, c[1] - r * 0.02),
+                (c[0] + fx * r * 1.02, c[1] + r * 0.10),
+                (c[0] + fx * r * 0.80, c[1] + r * 0.16),
+                (c[0] + fx * r * 0.70, c[1] + r * 0.02)], colour)
+
+    ex = c[0] + fx * r * 0.30
+    ey = c[1] - r * 0.04
+    front = (ex + fx * r * 0.40, ey + r * 0.07)      # toward the nose, low
+    back = (ex - fx * r * 0.36, ey - r * 0.14)       # outer corner, high
+    topm = (ex + fx * r * 0.04, ey - r * 0.22)
+    botm = (ex + fx * r * 0.02, ey + r * 0.14)
+    cv.polygon([front, topm, back, botm], dark)
+    # the iris burns inside the socket: this is the "glowing eye", and it is
+    # what carries the expression when the head is only forty pixels across
+    ix, iy = ex + fx * r * 0.16, ey - r * 0.01
+    ir = r * (0.145 + 0.035 * min(1.0, glow))
+    if glow > 0.02:
+        cv.circle((ix, iy), ir * 3.0, (255, 198, 120),
+                  width=0, fill=(255, 198, 120), alpha=int(44 + 120 * glow))
+    cv.circle((ix, iy), ir, (255, 226, 158), width=0, fill=(255, 226, 158))
+    cv.circle((ix + fx * ir * 0.16, iy - ir * 0.20), ir * 0.46, (255, 252, 240),
+              width=0, fill=(255, 252, 240))
+    # the brow: a wedge over the socket, thick outside and riding down toward
+    # the nose. Slant = anger, and it steepens when he is swinging.
+    droop = 0.08 + 0.14 * hurt
+    lift = 0.10
+    tb = (back[0], back[1] - r * (0.12 + lift + 0.06 * min(1.0, glow)))
+    tf = (front[0] + fx * r * 0.02, front[1] - r * (0.15 + lift - droop))
+    cv.polygon([back, tb, tf, front], dark)
+    # a short mouth line, thinner than the socket, pulled down when hurt
+    mx, my = c[0] + fx * r * 0.50, c[1] + r * 0.44
+    cv.line((mx - fx * r * 0.15, my - r * 0.02),
+            (mx + fx * r * 0.13, my - r * 0.02 - r * 0.04 * hurt),
+            2.6 * u, dark, alpha=170, caps=False)
+
+
+def _speed(now, then, sid: int, dt: float = 0.05):
+    """Where a limb tip is heading and how fast, in design units per second."""
+    a = then.pts[sid]
+    b = now.pts[sid]
+    return (b[0] - a[0], b[1] - a[1]), math.hypot(b[0] - a[0], b[1] - a[1]) / dt
 
 
 def draw_fighter(cv: Canvas, track, t: float) -> None:
-    """Flat silhouette: smooth tapered limbs, no joints, solid head."""
+    """The body: bowed spine, tapered limbs, feet on the floor, hands, face.
+
+    The skeleton still comes from the same IK solve the choreography was written
+    against — the anatomy only changes how that skeleton is painted, plus the
+    speed-driven deformation (stretch along the swing, joints trailing behind).
+    """
     pose = track.pose_at(t)
     sk = solve(pose)
     u = cv.unit() * pose.scale
-    colour = track.colour
+    colour, dark = track.colour, track.dark
+    g = GROUND
 
-    hip = sk.starts[1]                       # the pelvis is where segment 1 begins
-    for ids, w0, w1 in CHAINS:
-        rest = ids[1:] if ids[0] == 0 else ids
-        first = hip if ids[0] == 0 else sk.pts[ids[0]]
-        pts = [first] + [sk.pts[i] for i in rest]
-        _chain(cv, [cv.wp(p) for p in pts], w0 * u, w1 * u, colour)
+    then = track.skel(max(0.0, t - 0.05)) if t > 0.06 else sk
 
-    c = cv.wp(sk.head)
-    r = sk.head_r * u
-    cv.circle(c, r, colour, width=0, fill=colour)
+    def k_of(sid: int):
+        vel, spd = _speed(sk, then, sid)
+        return vel, min(1.0, max(0.0, (spd - 300.0) / 850.0))
+
+    def arm(sid_up: int, sid_lo: int, grip: float, col):
+        sh, elbow, wrist = sk.starts[sid_up], sk.pts[sid_up], sk.pts[sid_lo]
+        vel, k = k_of(sid_lo)
+        joints = [(sh, ARM_W[0] * u),
+                  (_lerp(sh, elbow, 0.45), ARM_W[1] * u),
+                  (elbow, ARM_W[2] * u),
+                  (_lerp(elbow, wrist, 0.55), FORE_W[1] * u),
+                  (wrist, FORE_W[2] * u)]
+        joints, _ = _swing_deform(joints, vel, k, 1.0)
+        sp = math.hypot(*vel) or 1.0
+        pts = [(p[0], p[1]) for p, _w in joints]
+        pts = _bend(pts, vel[0] / sp, vel[1] / sp, 2.6 * u * k)
+        widths = [w * u for _p, w in joints]
+        tp, tw = _tube_pts([(p, w / u) for p, w in zip(pts, widths)])
+        _tube(cv, [cv.wp(p) for p in tp], [w * u for w in tw], col)
+        _hand(cv, cv.wp(tp[-1]), sk.tip_angle(sid_lo), grip, col, dark, u)
+
+    def leg(sid_up: int, sid_lo: int, pitch: float, col):
+        hip, knee, ankle = sk.starts[sid_up], sk.pts[sid_up], sk.pts[sid_lo]
+        vel, k = k_of(sid_lo)
+        joints = [(hip, THIGH_W[0] * u),
+                  (_lerp(hip, knee, 0.45), THIGH_W[1] * u),
+                  (knee, THIGH_W[2] * u),
+                  (_lerp(knee, ankle, 0.42), SHIN_W[1] * u),
+                  (ankle, SHIN_W[2] * u)]
+        joints, _ = _swing_deform(joints, vel, k, 0.85)
+        sp = math.hypot(*vel) or 1.0
+        pts = [p for p, _w in joints]
+        pts = _bend(pts, vel[0] / sp, vel[1] / sp, 2.2 * u * k)
+        widths = [w for _p, w in joints]
+        tp, tw = _tube_pts(list(zip(pts, widths)))
+        _tube(cv, [cv.wp(p) for p in tp], tw, col)
+        ank = tp[-1]
+        planted = (pose.lift_a if sid_lo == 8 else pose.lift_b) <= 0.6
+        fwd = 0.0 if pose.facing > 0 else math.pi
+        if planted:
+            tilt = 0.0
+        else:
+            # a foot in the air points along the shin only when the shin is
+            # already driving forward (a kick); a foot that is merely off the
+            # floor hangs flat instead of pointing at the ground behind
+            sh = sk.tip_angle(sid_lo)
+            if math.sin(sh) < -0.15:
+                tilt = 1.48          # knee raised: the foot hangs off the ankle
+            else:
+                align = max(0.0, math.cos(sh - fwd))
+                rel = (sh - fwd + math.pi) % (2 * math.pi) - math.pi
+                rel = max(-0.35, min(1.30, rel))
+                tilt = rel * (0.18 + 0.82 * align) + pitch
+        _foot(cv, cv.wp(ank), tilt, col, u, pose.facing)
+
+    # far limbs in the darker tone first: depth without an outline
+    leg(7, 8, pose.pitch_a, dark)
+    arm(3, 4, pose.grip_a, dark)
+    # the body
+    tp, tw = _tube_pts([(p, w * u) for p, w in zip(sk.spine, SPINE_W)])
+    _tube(cv, [cv.wp(p) for p in tp], tw, colour)
+    # near limbs
+    leg(9, 10, pose.pitch_b, colour)
+    arm(5, 6, pose.grip_b, colour)
+    # head, lit while the fighter is swinging
+    _, kA = k_of(4)
+    _, kB = k_of(6)
+    _, kL = k_of(8)
+    _, kR = k_of(10)
+    glow = max(kA, kB, 0.45 * max(kL, kR))
+    hurt = max(0.0, min(1.0, (abs(pose.spine) - 6.0) / 12.0))
+    _head(cv, cv.wp(sk.head), sk.head_r * u, pose.facing, colour, dark, u,
+          glow, hurt)
+
+
+def _lighten(colour, f: float):
+    return tuple(int(c + (255 - c) * f) for c in colour[:3])
 
 
 def trails(cv: Canvas, track, t: float, dt: float = 0.075) -> None:
-    """Speed lines: compare each limb with where it was 0.075 s ago."""
+    """Smear frames: the fan a limb swept, in a light tint of the body colour.
+
+    A wedge behind the fist is invisible on a straight punch, because the punch
+    travels along the arm — there the *stretch* inside draw_fighter carries the
+    speed. What a kick, a hook or a sweep needs is the arc it crossed: the fan
+    from the shoulder or the hip between where the limb was and where it is,
+    plus a short streak past the tip.
+    """
     if t < dt + 0.02:
         return
     now = track.skel(t)
     then = track.skel(t - dt)
     u = cv.unit() * now.scale
+    tint = _lighten(track.colour, 0.40)
     for sid in (4, 6, 8, 10):
-        a, b = then.pts[sid], now.pts[sid]
-        dx, dy = b[0] - a[0], b[1] - a[1]
-        d = math.hypot(dx, dy)
-        if d < 12.0:
+        pivot = now.starts[sid]
+        b = now.pts[sid]
+        a = then.pts[sid]
+        d = math.hypot(b[0] - a[0], b[1] - a[1])
+        k = min(1.0, max(0.0, (d - 8.0) / 22.0))
+        if k < 0.30:
             continue
-        k = min(1.0, (d - 12.0) / 30.0)
-        nx, ny = -dy / d, dx / d
-        p1 = cv.wp(b)
-        for i, off in enumerate((-0.55, 0.0, 0.62)):
-            fade = 1.0 - abs(off) * 0.55
-            ln = (d * (0.85 + 0.25 * (1 - abs(off)))) * u
-            o = off * 9.0 * u
-            p0 = (p1[0] - dx * u * (0.85 + 0.25 * (1 - abs(off))) + nx * o,
-                  p1[1] - dy * u * (0.85 + 0.25 * (1 - abs(off))) + ny * o)
-            cv.line(p0, (p1[0] + nx * o, p1[1] + ny * o),
-                    max(1.2, (3.4 - abs(off) * 1.6) * u),
-                    track.colour, alpha=int(120 * k * fade), caps=False)
+        P, A, B = cv.wp(pivot), cv.wp(a), cv.wp(b)
+        cv.polygon([P, A, B], tint, alpha=int(78 * k))
+        # the leading edge, fainter, so the streak has a soft end
+        cv.polygon([P, B, ((B[0] + P[0]) * 0.5, (B[1] + P[1]) * 0.5)], tint,
+                   alpha=int(46 * k))
+        # a short streak past the tip, thrown further by the faster limbs
+        if k > 0.45:
+            f = 0.30 * (k - 0.45) / 0.55
+            vx, vy = B[0] - A[0], B[1] - A[1]
+            L = math.hypot(vx, vy) or 1.0
+            tip = (B[0] + vx * f, B[1] + vy * f)
+            w = 4.6 * u * (0.4 + 0.6 * k)
+            nx, ny = -vy / L, vx / L
+            cv.polygon([(B[0] + nx * w, B[1] + ny * w), tip,
+                        (B[0] - nx * w, B[1] - ny * w)],
+                       tint, alpha=int(112 * k))
 
 
 # --------------------------------------------------------------------- effects

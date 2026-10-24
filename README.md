@@ -254,6 +254,41 @@ at 1280×720 and the finished frame is resampled, which makes a small size an
 exact preview of the master (`--w 960` differs from the downscaled master by 0
 levels) rather than a second layout.
 
+### Anatomy, rig and deformation
+
+A clean stickman was what made the fight *readable*; it is not what makes it
+cinematic. Four changes close the gap with the hand-drawn reference — and they
+live entirely in the painting of the skeleton, so the IK, the pose table and the
+choreography are untouched and the motion is exactly the motion that was tuned
+before.
+
+| | what it is | where |
+| --- | --- | --- |
+| **articulated spine** | the back is never a straight line. `Pose.spine` bows the trunk through a curve from hip to neck — negative to load a punch and dodge, positive to drive an uppercut, deeply negative for a body shot — and the shoulders ride the tangent so the upper body rotates with it | `core.Pose`, `core.solve` |
+| **feet, hands, thickness** | a foot is a wedge with a heel and a toe, hinged at the ankle, planted flat when the sole is down and pointed when the foot leaves the floor; a fist is a knuckled knob at the end of the forearm, an open hand carries four fingers; arms, forearms, thighs, shins and spine all taper | `clashfilm._foot`, `_hand`, `_tube` |
+| **a face** | a jaw pushed toward the facing direction, a nose notch in profile, and a dark eye socket with a lit amber iris under a brow that slants down toward the nose. The iris blooms with limb speed, the brow steepens with the spine — so anger and pain are geometry, not a new asset | `clashfilm._head` |
+| **squash, stretch, smear** | limb tips stretch along their own velocity, the joints behind them drag the other way, and a fast limb sweeps a tinted fan between where it was and where it is. Under ~300 units/s nothing moves; at 1150 the arm is visibly longer | `clashfilm.draw_fighter`, `trails` |
+
+Two rules keep that rig honest, and both were learned the hard way:
+
+* The floor test is `pose.lift_*` — how far the foot anchor sits *above* its
+  resting height — never the ankle's distance to `GROUND`: posed feet stand
+  30–40 units above the ground line, so an ankle test calls every foot planted.
+* A foot facing left is **mirrored**, never rotated by π: the rotation flips it
+  upside down, which is exactly what blue's raised foot did for one build.
+
+Per-pose tuning (spine bow, toe pitch, grip) lives in one `_TUNE` table that is
+applied to the pose globals themselves, so `PS.GUARD` and `LIBRARY["guard"]`
+cannot drift apart.
+
+Cost and verification: 9.1 → **11.4 ms** per frame on the mountain set
+(9.2 → 12.4 on the desert) and a full 30 s render of **15.9 s** — the anatomy
+costs 2.3 ms a frame and nothing else. Against the previous master the finished
+film measures
+**SSIM 0.996**, the sky 44 dB — the background survived the animation change
+untouched — and 32.4 dB overall, which is the fighters: every one of those
+levels is the new anatomy, not an artefact.
+
 ### A second set: the desert
 
 The same fight re-staged on a new plate (`--set desert`), with its own title
@@ -262,10 +297,10 @@ and the zoom range are all derived from the scene.
 
 | | mountain | desert |
 | --- | --- | --- |
-| frame (720p, one core) | 8.8 ms | 9.2 ms |
-| full render, 2 cores | 14.5 s | **14.6 s** |
+| frame (720p, one core) | 11.4 ms | 12.4 ms |
+| full render, 2 cores | 15.9 s | **15.9 s** |
 | encode, same settings | 10.0 s | 10.4 s |
-| master size | 9.10 MB | 12.00 MB |
+| master size | 9.28 MB | 12.39 MB |
 | per-frame PSNR vs lossless source | median 47.9 dB | median 46.9 dB |
 | SSIM vs lossless source | 0.981 | 0.976 |
 | soundtrack | — | bit-identical to the mountain master |
@@ -278,6 +313,8 @@ so the setting stays put. Both are ~2.4–3.2 Mbps at 720p.
 ## Status
 
 30-second tests: the clean 1080p fight, then the Clash on two sets — mountain
-and desert — with the full HUD and soundtrack, both rendered in ~15 s. Next: the
-one-minute version with the same pipeline, then longer choreography and more
-camera angles.
+and desert — with the full HUD and soundtrack, both rendered in ~16 s, and the
+figures now carrying a bowed spine, articulated feet and hands, a face and
+speed deformation. Next: the close-up register — muscular anatomy, fingers and
+the Mortal-Kombat X-ray on the heaviest impacts — then the one-minute version
+with the same pipeline, and longer choreography with more camera angles.

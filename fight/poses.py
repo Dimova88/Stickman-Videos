@@ -41,7 +41,8 @@ ARM_REACH = 0.96
 
 def P(torso=-84.0, *, foot_l=(26.0, 0.0), foot_r=(-30.0, 0.0),
       a_up=64.0, a_fore=-14.0, b_up=74.0, b_fore=6.0, head=0.0, crouch=0.0,
-      air=0.0, hip=None) -> dict:
+      air=0.0, hip=None, spine=0.0, toe_l=0.0, toe_r=0.0,
+      grip_a=0.92, grip_b=0.92) -> dict:
     """One pose.
 
     ``torso``   spine angle (hip -> neck), e.g. -84 is nearly upright, -70 leans in
@@ -53,9 +54,14 @@ def P(torso=-84.0, *, foot_l=(26.0, 0.0), foot_r=(-30.0, 0.0),
     ``crouch``  extra hip drop, for ducks and landings
     ``air``     whole-body lift off the floor, for jumps
     ``hip``     pinned hip height above the floor, for a body that has gone down
+    ``spine``   how far the back bows off the hip->neck chord (+ = the chest
+                opens forward, - = the belly caves in); ``toe_*`` pitches a foot
+                that is off the floor; ``grip_*`` is 0 for an open hand and 1 for
+                a fist.
     """
     out = dict(torso=torso, foot_l=foot_l, foot_r=foot_r, a_up=a_up, a_fore=a_fore,
-               b_up=b_up, b_fore=b_fore, head=head, crouch=crouch, air=air)
+               b_up=b_up, b_fore=b_fore, head=head, crouch=crouch, air=air,
+               spine=spine, toe_l=toe_l, toe_r=toe_r, grip_a=grip_a, grip_b=grip_b)
     if hip is not None:
         out["hip"] = hip
     return out
@@ -78,6 +84,9 @@ def mirror(p: dict) -> dict:
     out["a_fore"], out["b_fore"] = 180.0 - p["b_fore"], 180.0 - p["a_fore"]
     out["foot_l"] = (-p["foot_r"][0], p["foot_r"][1])
     out["foot_r"] = (-p["foot_l"][0], p["foot_l"][1])
+    out["spine"] = -p.get("spine", 0.0)
+    out["toe_l"], out["toe_r"] = p.get("toe_r", 0.0), p.get("toe_l", 0.0)
+    out["grip_a"], out["grip_b"] = p.get("grip_b", 0.92), p.get("grip_a", 0.92)
     return out
 
 
@@ -175,7 +184,14 @@ def to_pose(p: dict, x: float, ground: float, facing: int = 1, scale: float = 1.
         ang = [math.pi - a for a in ang]
     return Pose(x=x, y=hip_y, facing=facing, scale=1.0,
                 head_turn=(p["head"] * D2R) * (1 if facing > 0 else -1),
-                angles=tuple(ang), arm_k=ARM_K, leg_k=LEG_K, head_k=HEAD_K)
+                angles=tuple(ang), arm_k=ARM_K, leg_k=LEG_K, head_k=HEAD_K,
+                spine=float(p.get("spine", 0.0)) * scale,
+                pitch_a=float(p.get("toe_l", 0.0)) * D2R,
+                pitch_b=float(p.get("toe_r", 0.0)) * D2R,
+                grip_a=float(p.get("grip_a", 0.92)),
+                grip_b=float(p.get("grip_b", 0.92)),
+                lift_a=float(p["foot_l"][1]) * scale,
+                lift_b=float(p["foot_r"][1]) * scale)
 
 
 def feet_of(p: dict):
@@ -301,6 +317,38 @@ RECOVER = P(torso=-62, hip=74, foot_l=(-20, 0), foot_r=(-66, 0),
             a_up=52, a_fore=-64, b_up=64, b_fore=-46, head=8)
 
 
+# ---------------------------------------------------------------- curvature
+# How each pose carries its weight: the bow of the back (`spine`, rig units at
+# mid-back, + = the chest opens forward / - = the body curls), the pitch of a
+# foot that leaves the floor (`toe_*`, degrees) and whether a hand is a fist
+# (`grip_*`). Authoring these next to the angles is what separates a pose that
+# is merely correct from one that is loading, folding or landing.
+_TUNE = {
+    "IDLE": {}, "GUARD": dict(spine=-3.0), "TIGHT": dict(spine=-5.0),
+    "JAB": dict(spine=4.0), "CROSS": dict(spine=6.5), "HOOK": dict(spine=3.0),
+    "UPPERCUT": dict(spine=8.5), "BLOCK_HI": dict(spine=-2.0, grip_a=0.8),
+    "BLOCK_MID": dict(spine=-3.0, grip_a=0.8), "BLOCK_LO": dict(spine=-4.0, grip_a=0.8),
+    "SLIP": dict(spine=-6.0), "DUCK": dict(spine=-9.0),
+    "KICK_MID": dict(spine=6.0, toe_r=16.0), "KICK_LOW": dict(spine=4.0, toe_r=10.0),
+    "KICK_HI": dict(spine=10.0, toe_r=22.0), "KNEE": dict(spine=-4.0, toe_r=12.0),
+    "CLINCH": dict(spine=-6.0), "SHOVE": dict(spine=5.0),
+    "HIT_HEAD": dict(spine=11.0, grip_a=0.6, grip_b=0.6),
+    "HIT_BODY": dict(spine=-14.0, grip_a=0.5, grip_b=0.5),
+    "LANDED": dict(spine=-6.0, grip_a=0.7, grip_b=0.7),
+    "AIRBORNE": dict(spine=4.0, toe_l=12.0, toe_r=12.0),
+    "ONE_LEG": dict(spine=2.0, toe_r=10.0),
+    "TIRED": dict(spine=-9.0, grip_a=0.35, grip_b=0.35),
+    "SQUARE": dict(spine=-2.0),
+    "KNEEL": dict(spine=-8.0, grip_a=0.3, grip_b=0.3),
+    "SLUMP": dict(spine=-13.0, grip_a=0.15, grip_b=0.15),
+    "VICTORY": dict(spine=9.0, grip_a=0.05, grip_b=0.05),
+    "SWEEP": dict(spine=-8.0, toe_r=8.0),
+    "AERIAL_KICK": dict(spine=10.0, toe_l=14.0, toe_r=10.0),
+    "FALL": dict(spine=-11.0, grip_a=0.4, grip_b=0.4),
+    "DOWN": dict(spine=-4.0, grip_a=0.25, grip_b=0.25),
+    "RECOVER": dict(spine=-6.0, grip_a=0.5, grip_b=0.5),
+}
+
 LIBRARY = {
     "idle": IDLE, "guard": GUARD, "tight": TIGHT, "jab": JAB, "cross": CROSS,
     "hook": HOOK, "upper": UPPERCUT, "block_hi": BLOCK_HI, "block_mid": BLOCK_MID,
@@ -311,3 +359,9 @@ LIBRARY = {
     "kneel": KNEEL, "slump": SLUMP, "victory": VICTORY, "sweep": SWEEP,
     "aerial": AERIAL_KICK, "fall": FALL, "down": DOWN, "recover": RECOVER,
 }
+
+# the tuning table mutates the same dicts the library holds, so `PS.GUARD` and
+# `LIBRARY["guard"]` can never drift apart
+for _name, _kw in _TUNE.items():
+    if _kw:
+        globals()[_name].update(_kw)
