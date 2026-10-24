@@ -374,28 +374,55 @@ def _calligraphy(cv, seed: float) -> None:
     cv._draw = None
 
 
-def impact_frame(cv, tracks, ta: float, seed: float, draw_fighter) -> None:
-    """Black page, ink behind, the two bodies in white — the anime hit frame.
+def impact_frame(cv, tracks, ta: float, seed: float, draw_fighter,
+                 sub: float = 0.0, focus=None) -> None:
+    """The drawn hit frame: two frames, inverted, with radial speed spikes.
 
-    The real silhouettes are drawn, through the real camera, with the fighter
-    colours swapped for white: nothing is re-posed and nothing can drift out of
-    step with the fight. ``draw_fighter`` is the renderer's own body painter.
+    Frame 1 is a white silhouette on black; frame 2 inverts to a black
+    silhouette on white. The bodies are the real ones, drawn through the real
+    camera with the fighter colours swapped, so nothing can drift out of step
+    with the fight — and the spikes are cut from the contact point, which is
+    the only thing in the frame that says *where* the blow landed.
     """
     from PIL import Image as _I
     w, h = cv.w, cv.h
+    invert = sub >= 0.5
+    page, ink = ((248, 244, 236), (10, 9, 12)) if invert else ((7, 6, 8), (250, 246, 238))
     cv.flush()
-    cv.img = _I.new("RGB", (w, h), (7, 6, 8))
+    cv.img = _I.new("RGB", (w, h), page)
     cv.d = ImageDraw.Draw(cv.img)
     cv._draw = None
-    _calligraphy(cv, seed)
+    if not invert:
+        _calligraphy(cv, seed)
+
+    # radial spikes, before the bodies so the fight stays on top of them
+    if focus is not None:
+        cx, cy = cv.wp(focus)
+        rng = np.random.default_rng(int(seed * 977) % 65521)
+        n = 24
+        for i in range(n):
+            a = (i / n) * math.tau + rng.uniform(-0.08, 0.08)
+            r0 = 26.0 * cv.unit() * rng.uniform(0.6, 1.0)
+            ln = rng.uniform(90.0, 300.0) * cv.unit()
+            wid = rng.uniform(0.012, 0.030)
+            p0 = (cx + math.cos(a) * r0, cy + math.sin(a) * r0)
+            p1 = (cx + math.cos(a - wid) * (r0 + ln * 0.55),
+                  cy + math.sin(a - wid) * (r0 + ln * 0.55))
+            p2 = (cx + math.cos(a + 0.5 * wid) * (r0 + ln), cy + math.sin(a + 0.5 * wid) * (r0 + ln))
+            p3 = (cx + math.cos(a + 0.6 * wid) * (r0 + ln * 0.55),
+                  cy + math.sin(a + 0.6 * wid) * (r0 + ln * 0.55))
+            cv.polygon([p0, p1, p2, p3], ink, alpha=int(rng.uniform(150, 255)))
+
     saved = [(tr, tr.colour, tr.dark) for tr in tracks]
     for tr, _c, _d in saved:
-        tr.colour, tr.dark = (250, 246, 238), (250, 246, 238)
+        tr.colour, tr.dark = ink, ink
     cv.mono = True
+    cv.mono_ink = ink
     for tr in tracks:
         draw_fighter(cv, tr, ta)
     cv.flush()
     cv.mono = False
+    cv.mono_ink = None
     for tr, c, d in saved:
         tr.colour, tr.dark = c, d
 

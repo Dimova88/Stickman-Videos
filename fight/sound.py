@@ -496,6 +496,7 @@ def score(scene, duration: float = 30.2, parts: bool = False):
         tracks = {k: v for k, v in scene.items()
                   if hasattr(v, "skel") and hasattr(v, "name")}
     cuts = list(scene.get("cuts", ()))
+    ink = list(scene.get("ink", ()))
     texts = scene.get("texts", ())
 
     def text_time(style, default):
@@ -582,14 +583,14 @@ def score(scene, duration: float = 30.2, parts: bool = False):
         hits.add(steel_grind(0.62, seed=lock_t), lock_t - 0.03, 0.30,
                  (heavy["x"] / 960.0) * 2.0 - 1.0 if heavy else 0.0, send=0.6)
 
-    # the close-ups: the blow heard from inside the skull
-    for i, (start, dur, side, expr, kind) in enumerate(cuts):
-        pan = -0.4 if side == "red" else 0.4
-        hits.add(boom(1.2, seed=71 + i), start, 0.85, pan, send=0.8)
+    # the ink frames: the blow heard from inside the skull — two frames of
+    # black and white get a sub drop under the hit that frames them
+    for i, start in enumerate(ink):
+        hits.add(boom(1.2, seed=71 + i), start, 0.85, 0.0, send=0.8)
         hits.add(metal_clang(1.4, 420.0, seed=71 + i, length=1.4), start,
-                 0.35, pan, send=0.9)
+                 0.35, 0.0, send=0.9)
         hits.add(breath(1.6, seed=90 + i, pitch=88.0, length=0.42), start + 0.04,
-                 0.30, pan)
+                 0.30, 0.0)
 
     # -------------------------------------------------------- 2. the music
     def drum(t, size=1.0, gain=0.5, pitch=62.0):

@@ -373,10 +373,8 @@ def build(set_name: str = "mountain") -> dict:
             e["y"] = (tip[1] * 0.55 + tgt.head[1] * 0.45)
         e["colour"] = col[e["by"]]
 
-    cuts = (
-        (16.90, 0.46, "teal", "hit", "face"),    # the wide cut through two men
-        (23.30, 0.52, "blue", "ko", "face"),     # the last one
-    )
+    # No face inserts: the accent on these two blows is the ink frame, not a cut
+    cuts = ()
 
     named = {tr.name: tr for tr in tracks}
     return {"set": set_name, "tracks": tracks, "hero": hero, **named, "impacts": impacts, "dust": dusts,

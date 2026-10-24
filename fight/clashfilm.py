@@ -26,7 +26,6 @@ FRAME = 1.0 / 24.0
 from .clash import (BLUE, BLUE_DARK, DESIGN_H, DESIGN_W, DURATION, FIG_SCALE, FPS,
                     GROUND, INK, RED, RED_DARK, STANCE, build)
 from .poses import to_pose
-from .insert import CUTS as INSERTS, draw_insert
 from .core import SEG, SEGMENT_ORDER, solve
 from .draw import Canvas, Cam
 
@@ -286,15 +285,13 @@ _scene_cache = {}
 
 
 def cuts_of(scene):
-    return scene.get("cuts") or INSERTS
+    """Reserved: this film has no face inserts (see AGENT_INSTRUCTIONS.md).
 
-
-def cut_at(t: float, scene=None):
-    """The close-up register: instant on the blow, then a held push-in."""
-    for start, dur, side, expr, kind in cuts_of(scene or {}):
-        if start <= t < start + dur:
-            return (start, dur, side, expr, kind), (t - start) / dur
-    return None
+    A drawn human close-up built out of primitives is the one thing that always
+    reads as programmer art; the dramatic accent is the two-frame ink hit
+    instead, which is just the real bodies, inverted.
+    """
+    return ()
 
 
 def scene(set_name: str = "mountain"):
@@ -540,66 +537,48 @@ def _hand_open(cv, wrist, ang: float, grip: float, colour, u: float,
 
 def _head(cv: Canvas, c, r: float, facing: int, colour, dark, u: float,
           glow: float = 0.0, hurt: float = 0.0) -> None:
-    """The head: skull, jaw, and an anime eye under a hard brow.
+    """A clean head: a skull with a jaw, and nothing drawn on it.
 
-    A flat circle reads as a ball on a stick. Three shapes turn it into a face:
-    a jaw pushed toward the facing direction, a white eye lens with a dark iris,
-    and a brow that slants down toward the nose — the slant is the expression,
-    and it steepens when the fighter is swinging or taking a shot.
+    A face painted with primitives — a nose wedge, an almond eye, a brow, a
+    mouth line — is the one thing that reads as programmer art at forty pixels
+    across. So the head is a silhouette, and the only feature it ever gets is a
+    pair of glowing slits, which appear when the fighter is in a high-energy
+    state (a swing, a parry, a killing blow) and are gone the rest of the time.
     """
     fx = facing
     cv.circle(c, r, colour, width=0, fill=colour)
+    # the jaw: still a silhouette, but it gives the ball a direction
     cv.circle((c[0] + fx * r * 0.17, c[1] + r * 0.34), r * 0.60, colour,
               width=0, fill=colour)
-    # muzzle / brow ridge, so the profile has a nose instead of a smooth ball
-    cv.polygon([(c[0] + fx * r * 0.86, c[1] - r * 0.02),
-                (c[0] + fx * r * 1.02, c[1] + r * 0.10),
-                (c[0] + fx * r * 0.80, c[1] + r * 0.16),
-                (c[0] + fx * r * 0.70, c[1] + r * 0.02)], colour)
 
     if getattr(cv, "mono", False):
-        # the ink frame: one black slash where the eye is, and nothing else —
-        # a face painted in white on black has no room for an iris
+        # the ink frame is a high-energy state, so it gets the slit
         cv.line((c[0] - fx * r * 0.55, c[1] - r * 0.16),
                 (c[0] + fx * r * 0.55, c[1] - r * 0.28),
-                max(2.0, 0.22 * r), INK, alpha=255, caps=True)
+                max(2.0, 0.22 * r), getattr(cv, "mono_ink", None) or INK,
+                alpha=255, caps=True)
         return
 
-    ex = c[0] + fx * r * 0.32
-    ey = c[1] - r * 0.06
-    # a small almond, not a mask: at forty pixels the head only has room for a
-    # dot of an eye and a line of brow, and anything bigger turns the face into
-    # a dark smear with a slash across it
-    front = (ex + fx * r * 0.19, ey + r * 0.03)      # toward the nose, low
-    back = (ex - fx * r * 0.19, ey - r * 0.05)       # outer corner, high
-    topm = (ex + fx * r * 0.01, ey - r * 0.10)
-    botm = (ex + fx * r * 0.00, ey + r * 0.07)
-    cv.polygon([front, topm, back, botm], dark)
-    # the iris burns inside the socket: this is the "glowing eye", and it is
-    # what carries the expression when the head is only forty pixels across
-    ix, iy = ex + fx * r * 0.10, ey - r * 0.02
-    ir = r * (0.062 + 0.020 * min(1.0, glow))
-    if glow > 0.02:
-        # the aura: bloom picks this up and the eye reads as lit from inside
-        cv.circle((ix, iy), ir * 4.6, (255, 190, 110),
-                  width=0, fill=(255, 190, 110), alpha=int(26 + 78 * glow))
-        cv.circle((ix, iy), ir * 2.4, (255, 208, 140),
-                  width=0, fill=(255, 208, 140), alpha=int(40 + 120 * glow))
-    cv.circle((ix, iy), ir, (255, 226, 158), width=0, fill=(255, 226, 158))
-    cv.circle((ix + fx * ir * 0.18, iy - ir * 0.22), ir * 0.44, (255, 252, 240),
-              width=0, fill=(255, 252, 240))
-    # the brow is a thin stroke *above* the eye, never a slab welded to it: at
-    # this size a filled wedge turns the whole face into one dark smear
-    droop = 0.05 + 0.12 * hurt - 0.03 * min(1.0, glow)
-    cv.line((ex - fx * r * 0.22, ey - r * 0.34 - r * droop * 0.5),
-            (ex + fx * r * 0.22, ey - r * 0.28 + r * droop),
-            max(1.4, 0.055 * r), dark, alpha=215, caps=True)
-
-    # a short mouth line, thinner than the socket, pulled down when hurt
-    mx, my = c[0] + fx * r * 0.46, c[1] + r * 0.40
-    cv.line((mx - fx * r * 0.15, my - r * 0.02),
-            (mx + fx * r * 0.13, my - r * 0.02 - r * 0.04 * hurt),
-            2.6 * u, dark, alpha=170, caps=False)
+    if glow <= 0.12:
+        return
+    # two angular slits, near and far, angled with the facing direction
+    k = min(1.0, (glow - 0.12) / 0.7)
+    for side, scale in ((-1.0, 0.78), (1.0, 1.0)):
+        ex = c[0] + fx * r * (0.30 + 0.13 * side) - fx * r * 0.06
+        ey = c[1] - r * (0.05 + 0.05 * side)
+        w = r * 0.26 * scale * (0.75 + 0.25 * k)
+        h = r * 0.085 * scale * (1.0 - 0.35 * k)          # narrows as it burns
+        slant = fx * r * 0.09
+        pts = [(ex - w * 0.5, ey + h * 0.5 + slant * 0.4),
+               (ex - w * 0.15, ey - h * 0.5 - slant * 0.2),
+               (ex + w * 0.5, ey - h * 0.5 - slant),
+               (ex + w * 0.2, ey + h * 0.5)]
+        if k > 0.35:
+            cv.circle((ex, ey), w * 0.95, (255, 196, 120), width=0,
+                      fill=(255, 196, 120), alpha=int(30 + 70 * k))
+        cv.polygon(pts, (255, 246, 214), alpha=int(190 + 65 * k))
+        cv.polygon([(p[0], p[1]) for p in pts[1:]] + [pts[0]],
+                   (255, 226, 158), alpha=int(70 * k))
 
 
 def _speed(now, then, sid: int, dt: float = 0.05):
@@ -801,13 +780,30 @@ def trails(cv: Canvas, track, t: float, dt: float = 0.075) -> None:
 
 
 # --------------------------------------------------------------------- effects
-def star(cx, cy, r_out, r_in, n=7, rot=0.0):
-    pts = []
-    for i in range(n * 2):
-        a = rot + i * math.pi / n
-        r = r_out if i % 2 == 0 else r_in
-        pts.append((cx + math.cos(a) * r, cy + math.sin(a) * r))
-    return pts
+def burst_spikes(cv: Canvas, cx: float, cy: float, u: float, size: float,
+                 k: float, seed: float, n: int = 24) -> None:
+    """Needles flying out of the contact point: 24 irregular tapered spikes.
+
+    Not a star polygon: a star has a fixed, symmetric outline and reads as a
+    sticker. These are needles of different lengths, each one tapering to a
+    point, so the shape reads as *debris thrown off a hit* and never repeats.
+    """
+    rng = np.random.default_rng(int(seed * 977) % 65521)
+    inner = (4.0 + 5.0 * size) * u
+    reach = (18.0 + 52.0 * size) * u
+    for i in range(n):
+        a = (i / n) * math.tau + rng.uniform(-0.10, 0.10)
+        ln = reach * rng.uniform(0.45, 1.0) * (0.45 + 0.55 * (1.0 - k) ** 0.8)
+        w = (0.45 + 1.15 * size) * u * rng.uniform(0.45, 1.15)
+        ca, sa = math.cos(a), math.sin(a)
+        nx, ny = -sa, ca
+        r0 = inner * rng.uniform(0.7, 1.3)
+        p0 = (cx + ca * r0 + nx * w, cy + sa * r0 + ny * w)
+        p1 = (cx + ca * (r0 + ln), cy + sa * (r0 + ln))
+        p2 = (cx + ca * r0 - nx * w, cy + sa * r0 - ny * w)
+        warm = rng.uniform(0.0, 1.0) ** 2
+        col = (255, int(255 - 26 * warm), int(250 - 120 * warm))
+        cv.polygon([p0, p1, p2], col, alpha=int(250 * (1.0 - k) ** 0.7))
 
 
 def draw_impacts(cv: Canvas, impacts, t: float, overlay_flash: list,
@@ -833,35 +829,47 @@ def draw_impacts(cv: Canvas, impacts, t: float, overlay_flash: list,
 
         if age < 0.10:
             k = age / 0.10
-            overlay_flash.append(int((58 if final else 46) * (1 - k) ** 2 * size))
+            # steel on steel throws a hot point, not a white page: the flash
+            # there is a third as strong, so the two blades cross *in* the light
+            gain = 0.34 if e.get("sparks") else 1.0
+            overlay_flash.append(int((58 if final else 46) * gain * (1 - k) ** 2 * size))
 
         if bursts and age < (0.42 if final else 0.26):
             k = age / (0.42 if final else 0.26)
             grow = 1 - (1 - k) ** 2
-            # a blade clash already has sparks and two steel edges in the same
-            # few pixels: a full-size burst star swallows the swords, so keep it
-            # tight enough that the X of the blades still reads
-            base = (11 + 19 * size) if e.get("sparks") else (14 + 25 * size)
-            r = base * u * (0.55 + 0.75 * grow) * (1 - 0.3 * k)
-            cv.polygon(star(cx, cy, r, r * 0.40, 7 if not final else 9,
-                            0.4 + e["t"] * 2.7), (255, 255, 255),
-                       alpha=int(245 * (1 - k) ** 0.6), width=max(2.0, 4.4 * u),
-                       outline=INK)
+            # a hot bloom at the contact point, as concentric soft discs — no
+            # outline anywhere, so it never reads as a drawn shape
+            halo = (26.0 + 44.0 * size) * u * (0.45 + 0.55 * grow) * (1.0 - 0.4 * k)
+            box = (cx - halo * 1.6, cy - halo * 1.6, cx + halo * 1.6, cy + halo * 1.6)
+            ov = Overlay(cv, box)
+            for f, a in ((1.55, 30), (1.05, 46), (0.58, 96)):
+                rr = max(1.0, halo * f)
+                ov.ellipse((cx - rr, cy - rr, cx + rr, cy + rr), (255, 243, 212, a))
+            ov.flush()
+            burst_spikes(cv, cx, cy, u, size, k, e["t"] + 0.3,
+                         n=15 if e.get("sparks") else 20)
+            core = (2.6 + 6.0 * size) * u * (1.0 - 0.5 * k) * (0.7 + 0.3 * grow)
+            cv.disc((cx, cy), max(1.0, core), (255, 254, 248))
 
-        # radial particles, fixed seed per impact so the render is reproducible
+        # debris streaks: fast, thin, and they fall — the thing that separates a
+        # hit from a decoration
         if bursts and age < (0.60 if final else 0.42):
             plife = 0.60 if final else 0.42
             k = age / plife
             rng = np.random.default_rng(int(e["t"] * 1000) % 99991)
-            n = 11 if final else 8
+            n = 12 if final else 9
             for i in range(n):
                 ang = rng.uniform(0, math.tau)
                 spd = rng.uniform(0.5, 1.3) * (1.0 + 0.4 * size)
-                dist = (14 + 120 * k * spd) * u * size
+                dist = (12 + 130 * k * spd) * u * size
                 px = cx + math.cos(ang) * dist
-                py = cy + math.sin(ang) * dist + 26 * u * k * k
-                rr = max(1.0, (3.4 - 2.6 * k) * u * (1.0 + 0.3 * size))
-                cv.disc((px, py), rr, (250, 246, 238))
+                py = cy + math.sin(ang) * dist + 30 * u * k * k
+                tail = (10.0 + 26.0 * spd) * u * (1.0 - k) ** 1.3
+                tx, ty = math.cos(ang), math.sin(ang)
+                cv.line((px - tx * tail * 0.5, py - ty * tail * 0.5),
+                        (px + tx * tail * 0.5, py + ty * tail * 0.5),
+                        max(1.0, (2.4 - 1.7 * k) * u), (252, 240, 214),
+                        alpha=int(230 * (1 - k) ** 1.1))
 
         # sparks: length decays with age. Not on a blade clash -- there the
         # real steel sparks are already on screen, and these straight rays read
@@ -1100,21 +1108,10 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
     # camera shake — so the instant of contact is one held frame. Only the
     # impact flash and the HUD stay on the real clock: the world freezes, the
     # blow rings out.
-    cut = cut_at(t, scene)
-    if cut is None:
-        draw_background(cv, cam_state, scene)
-        # craters and blood already on the floor: drawn before the bodies so a
-        # fighter stands *in* the arena rather than on top of the photograph
-        vfx.draw_marks(cv, scene, ta)
-
-    if cut is not None:
-        # the close-up register: a cut, not a camera move, so no HUD shadows,
-        # no dust and no star burst — just the body and the light on it
-        draw_insert(cv, cut, scene)
-        draw_hud(cv, scene, t)
-        if (w, h) != (DESIGN_W, DESIGN_H):
-            return cv.img.resize((w, h), Image.LANCZOS)
-        return cv.img
+    draw_background(cv, cam_state, scene)
+    # craters and blood already on the floor: drawn before the bodies so a
+    # fighter stands *in* the arena rather than on top of the photograph
+    vfx.draw_marks(cv, scene, ta)
 
     # a scene is a list of fighters: the duel the film has been built around is
     # two, but the blade film ends one against three and nothing below cares
@@ -1182,8 +1179,11 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
     hit = vfx.impact_frame_index(scene, t)
     if hit is not None:
         seed, sub = hit
-        vfx.impact_frame(cv, tracks, ta,
-                         seed + 0.01 * sub, draw_fighter)
+        focus = next((e.get("anchor") and (e["x"], e["y"]) or (e["x"], e["y"])
+                      for e in scene["impacts"] if abs(e["t"] - seed) < 0.03
+                      and e.get("x") is not None), None)
+        vfx.impact_frame(cv, tracks, ta, seed + 0.01 * sub, draw_fighter,
+                         sub=sub, focus=focus)
         if (w, h) != (DESIGN_W, DESIGN_H):
             return cv.img.resize((w, h), Image.LANCZOS)
         return cv.img
@@ -1207,9 +1207,10 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
                                  samples=8)
 
     # bloom: only while something hot is on screen, because it is not free
-    hot = any(0.0 <= t - e["t"] < 0.34 for e in scene["impacts"])
+    hot = any(0.0 <= t - e["t"] < 0.22 and not e.get("sparks")
+              for e in scene["impacts"])
     if hot:
-        cv.img = vfx.bloom(cv.img, 0.55)
+        cv.img = vfx.bloom(cv.img, 0.42)
 
     # fades
     fade = 0.0
