@@ -570,7 +570,8 @@ figures carrying a bowed spine, articulated feet and hands, a face and speed
 deformation, three close-up inserts on the heaviest impacts (one of them an
 X-ray of the skull), hitstop and compression on every contact, a coiled wind-up
 before every landed blow, knockdowns that fly, bounce, skid and climb back up,
-no HUD at all, feet that step and skid, and a 25-shot camera with whip pans, punch-ins, floor-level
+no HUD at all, feet that step and skid, a chained grapple (block → clinch →
+knee → throw at 14.9 s), and a 25-shot camera with whip pans, punch-ins, floor-level
 shots, directional shake and a parallax foreground layer — now including the
 three angles that needed new art: a raised camera looking down a receding arena
 floor, over the near fighter's shoulder, and a five-frame dive onto the fist
