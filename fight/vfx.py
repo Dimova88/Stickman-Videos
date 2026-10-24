@@ -276,6 +276,17 @@ def impact_frame_index(scene, t: float, fps: float = 24.0):
     Only the *heavy* ones: a clash, the final blow, or a landed hit of size 1.0
     and up. A hard cut to ink on every jab would be a strobe, not an accent.
     """
+    explicit = scene.get("ink")
+    if explicit is not None:
+        # a film may say exactly which contacts deserve a drawn frame. In the
+        # blade film every clash is steel, and steel is sparks — cutting to ink
+        # on each one would be a strobe, not an accent
+        for t0 in explicit:
+            d = t - t0
+            if 0.0 <= d < IMPACT_FRAMES / fps * 1.0001:
+                return t0, d * fps
+        return None
+    hit = None
     for e in scene["impacts"]:
         if e["kind"] == "block":
             continue
@@ -283,8 +294,15 @@ def impact_frame_index(scene, t: float, fps: float = 24.0):
             continue
         d = t - e["t"]
         if 0.0 <= d < IMPACT_FRAMES / fps * 1.0001:
-            return e["t"], d * fps
-    return None
+            hit = (e["t"], d * fps)
+    if hit is None:
+        return None
+    # one cut per second at most: a strobe is not an accent
+    for e in scene["impacts"]:
+        if 0.0 < hit[0] - e["t"] < 0.9 and e["kind"] != "block" and \
+                (e["kind"] in ("clash", "final") or e.get("size", 1.0) >= 0.95):
+            return None
+    return hit
 
 
 def _arc(d, cx, cy, r, a0, a1, w0, w1, alpha, rng):

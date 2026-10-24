@@ -87,6 +87,9 @@ SQUASH_RISE = 0.10
 
 
 def _victims(e) -> tuple[str, ...]:
+    on = e.get("on")                 # explicit victim, for more than two fighters
+    if on:
+        return (on,)
     by = e["by"]
     if by == "red":
         return ("blue",)

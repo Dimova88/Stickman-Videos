@@ -26,7 +26,7 @@ def main() -> None:
     ap.add_argument("--start", type=float, default=0.0)
     ap.add_argument("--end", type=float, default=DURATION)
     ap.add_argument("--set", dest="set_name", default="mountain",
-                    choices=["mountain", "desert"],
+                    choices=["mountain", "desert", "steel-mountain", "steel-desert"],
                     help="which painted plate and title card to use")
     ap.add_argument("--preset", default="veryfast")
     ap.add_argument("--crf", type=int, default=16)

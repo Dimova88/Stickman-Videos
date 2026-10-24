@@ -8,7 +8,12 @@ script — no editor, no timeline clicking, no stock assets.
 | file | what it is |
 | --- | --- |
 | [`renders/mountain_clash_720p.mp4`](renders/mountain_clash_720p.mp4) | **Mountains Clash**, 30 s test: 1280×720, 24 fps, HUD, procedural soundtrack |
-| [`renders/storyboard.jpg`](renders/storyboard.jpg) | 12-moment storyboard of the same fight |
+| [`renders/desert_clash_720p.mp4`](renders/desert_clash_720p.mp4) | the same fight on the desert plate |
+| [`renders/steel_clash_720p.mp4`](renders/steel_clash_720p.mp4) | **One Blade, Three Men**: katana, 1 vs 3, 30 s, mountain |
+| [`renders/steel_desert_720p.mp4`](renders/steel_desert_720p.mp4) | the blade film on the desert plate |
+| [`renders/steel_storyboard.jpg`](renders/steel_storyboard.jpg) | 8-moment storyboard of the blade film |
+| [`renders/storyboard.jpg`](renders/storyboard.jpg) | 12-moment storyboard of the duel |
+| [`assets/steel_assets_sheet.png`](assets/steel_assets_sheet.png) | the exported originals: katana, slash crescent, sparks, ink glyphs |
 | [`renders/fight_1080p.mp4`](renders/fight_1080p.mp4) | the earlier clean-background 1080p fight (no HUD) |
 
 
@@ -35,6 +40,13 @@ python3 -m venv .venv
 # Mountains Clash, 30 s, 1280x720 (about 47 s on 2 cores)
 .venv/bin/python tools/render_clash.py --w 1280 --out renders/mountain_clash_720p.mp4
 
+# the blade film: one katana against three (about 39 s on 2 cores)
+.venv/bin/python tools/render_clash.py --set steel-mountain --w 1280 --out renders/steel_clash_720p.mp4
+.venv/bin/python tools/render_clash.py --set steel-desert --w 1280 --out renders/steel_desert_720p.mp4
+
+# re-export the art as standalone transparent PNGs (assets/steel, assets/ink)
+.venv/bin/python tools/make_assets.py
+
 # 12-moment storyboard, and a fast low-res slice while iterating
 .venv/bin/python tools/render_clash.py --storyboard 12 --w 960
 .venv/bin/python tools/render_clash.py --w 640 --start 18 --end 24 --out /tmp/slice.mp4
@@ -53,6 +65,11 @@ python3 -m venv .venv
 | `fight/choreo.py` | the 30 s fight — pose keys + root path per fighter, spacing rules, camera, hit/hurt events |
 | `fight/film.py` | frame loop, impact stars, speed streaks, dust, shake, synthesised audio, MP4 encode |
 | `fight/clash.py` | **Mountains Clash** choreography: keyed poses + 29 impacts + camera + on-screen text |
+| `fight/steel.py` | **One Blade, Three Men**: four tracks, parries, blade locks, the cuts, 17 shots |
+| `fight/steelblade.py` | the katana's geometry, the slash trail and the sparks — all in design units |
+| `fight/blur.py` | the shutter: frame averaging along the camera's own velocity |
+| `fight/vfx.py` | earth, air, blood, impact frames, bloom |
+| `tools/make_assets.py` | exports the sword, the crescent, the sparks and the ink as PNGs |
 | `fight/clashfilm.py` | the Mountains Clash renderer: landscape crop, trails, impacts, dust, HUD, procedural audio, FFmpeg pipe |
 | `tools/pose_sheet.py` | renders the whole pose library to one contact sheet — the tool used to check anatomy |
 | `assets/mountain_background.png` | 1376×768 painted mountain arena (generated for this project, no third-party art) |
@@ -573,6 +590,78 @@ cut. Measured per angle: wide 33 ms, from above 24 ms (the ground plate needs no
 parallax layer), fist dive 40 ms, over the shoulder 40 ms — the shoulder patch is
 built once per shot (two Gaussian blurs of a 490×720 mask) and then costs a
 single masked paste per frame, which is 17 ms cheaper than rebuilding it.
+### Steel: one blade against three (*fight/steel.py*, *fight/steelblade.py*)
+
+The third film is not a punch-up with props. Four tracks — the red hero and
+three rivals (`blue`, `teal`, `slate`) — and one sword, because three swords in
+one frame read as a thicket of white bars. The rivals carry fists, speed and
+numbers; the hero carries steel.
+
+The blade is geometry, not a sprite, so it can never drift from the hand that
+holds it:
+
+* **the shape.** A 23rd of its length wide at the machi, easing to the yokote,
+  then a short kissaki — a long taper to the point reads as a spear. Everything
+  is authored in *design units* and transformed once, by `Canvas.wp`; the first
+  version mixed screen-pixel widths with design-unit points and drew the swords
+  at font scale.
+* **the read.** A bright edge line on the cutting side, a dark spine on the
+  other, a gold tsuba and three grip bands: four details, and the eye stops
+  seeing a pale stick.
+* **the trail.** The point's own path over the last eighth of a second, drawn as
+  a tapered brush — thick and bright at the blade, a whisker at the tail. It is
+  gated on how far the *point actually travelled*, so a blade that is merely
+  held has no trail, and it always ends exactly where the sword ends. Two
+  earlier attempts are recorded in the commit log: a ribbon between the tip's
+  historical path and an inner arc gave a kite as soon as the fighter stepped,
+  and a fan around the current hand never left the frame when the sword pointed
+  up.
+* **the contact.** Sparks are straight streaks that leave the contact point
+  fast, fall, and fade over 0.45 s — drawn *after* the burst so the steel reads
+  on top of it. A clash burst is deliberately smaller than a fist impact's
+  (11 + 19·size instead of 14 + 25·size) and drops the radial ray lines
+  entirely, because both were swallowing the two blades at the exact frame the
+  audience needs to see them cross.
+
+Sixteen contacts — seven clashes, six landed hits, two blocks and the finish —
+plus eight parry keys and two blade locks arrange the 1 vs 3: the hero is pushed
+left, gives ground, is crowded by a second and a third man, locks blades at
+19.9 s, cuts one down at 16.9 s (an ink frame and a face insert) and finishes the
+last at 23.3 s. A man on the floor drops his sword — checked against the solved skeleton, not a flag — so
+nothing hangs in the air next to an invisible wrist.
+
+### The shutter (*fight/blur.py*)
+
+The whip pan used to be a smear: the finished frame squashed horizontally and
+blended over itself, which says "the camera moved" the way a badly cut GIF does.
+It is now a real shutter — the frame is averaged over eight positions along the
+camera's own velocity, in 16-bit, on an edge-padded copy, which costs 8 ms
+instead of 24 ms and leaves everything that did not move perfectly sharp.
+
+Two things had to be learned. **Slicing the frame into shifted bands is not the
+same thing**: the whip moves the camera 17 px in a frame while the bodies move
+three, so offset copies land as a ghost band through the middle of the fighters
+— do not go back to that. And the blur is driven by the *camera*, so an authored
+jump in camera state (an anchor that changes target mid-shot) turns into a
+300 px smear on exactly the frame that must be crisp; the blade lock now cuts
+instead of whipping, and its anchor never changes.
+
+### The assets (*tools/make_assets.py*)
+
+Everything in the film is procedural, so the pieces can be exported on their own
+with an alpha channel and reused in a thumbnail, a title card or the feature:
+
+| file | what it is |
+| --- | --- |
+| `assets/steel/katana.png` | the blade, grip included, 2× design scale |
+| `assets/steel/slash_crescent.png` | the crescent a swing leaves, tapered at both ends |
+| `assets/steel/sparks_strip.png` | six frames of the steel-on-steel burst |
+| `assets/ink/glyph_wall.png` | the calligraphy behind an impact frame |
+| `assets/steel_assets_sheet.png` | all four on one contact sheet |
+
+`python tools/make_assets.py` regenerates them from the same code the film draws
+with, so the assets cannot fall out of step with the picture.
+
 ### A second set: the desert
 
 The same fight re-staged on a new plate (`--set desert`), with its own title
@@ -607,5 +696,11 @@ frames and a gated bloom, feet that step and skid, a chained grapple (block → 
 knee → throw at 14.9 s), and a 25-shot camera with whip pans, punch-ins, floor-level
 shots, directional shake and a parallax foreground layer — now including the
 two angles that needed new art: a raised camera looking down a receding arena
-floor, and a five-frame dive onto the fist that is about to land. Next: chained choreography (blocks into grabs into
-throws), bladed weapons, and the first 1-vs-many exchange.
+floor, and a five-frame dive onto the fist that is about to land.
+
+The weapons round is in: a katana that is geometry rather than a sprite, a slash
+trail sampled from the point's own path, sparks that bounce, blade locks, a
+1-vs-3 film on both sets (`steel_clash_720p.mp4`, `steel_desert_720p.mp4`,
+17 shots), a real directional shutter for the whip pans, and the four art pieces
+exported to `assets/` so they outlive this film. Next: the first minute of the
+long film, with the blade vocabulary reused across sets.

@@ -118,11 +118,17 @@ SHOTS = (
 )
 
 
-def shot_at(t: float) -> dict:
-    for s in SHOTS:
+def shots_of(scene=None):
+    """The shot list of a scene: the duel's by default, the blade film's own."""
+    return (scene or {}).get("shots") or SHOTS
+
+
+def shot_at(t: float, scene=None) -> dict:
+    shots = shots_of(scene)
+    for s in shots:
         if s["t0"] <= t < s["t1"]:
             return s
-    return SHOTS[-1]
+    return shots[-1]
 
 
 # --------------------------------------------------------------------- anchors
@@ -133,7 +139,21 @@ def _feet(sk) -> tuple[float, float]:
 
 
 def _pair(scene, t: float):
-    return scene["red"].skel(t), scene["blue"].skel(t)
+    """The lead fighter and the opponent nearest to it.
+
+    The duel the film has been built around is two fighters, and that is what
+    this returns for it — but a scene may carry more (the blade film ends one
+    against three), and every anchor below only ever needs "the hero" and "the
+    one he is dealing with".
+    """
+    lead = scene.get("hero") or scene["red"]
+    sa = lead.skel(t)
+    others = [tr for tr in (scene.get("tracks") or (scene["red"], scene["blue"]))
+              if tr is not lead]
+    if not others:
+        return sa, sa
+    other = min(others, key=lambda tr: abs(tr.skel(t).head[0] - sa.head[0]))
+    return sa, other.skel(t)
 
 
 def _downed(scene, t: float):
@@ -223,11 +243,11 @@ def camera(scene, t: float, ta: float | None = None) -> dict:
     contact the camera is as frozen as the bodies.
     """
     ta = t if ta is None else ta
-    shot = shot_at(t)
+    shot = shot_at(t, scene)
     x, y, zoom, dof = _shot_cam(scene, shot, t)
     if shot["style"] == "whip":
         prev = None
-        for s in SHOTS:
+        for s in shots_of(scene):
             if s["t1"] <= t and s is not shot:
                 prev = s
         if prev is not None and t < shot["t0"] + WHIP:

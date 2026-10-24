@@ -19,11 +19,14 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from .camera import camera
 from .layers import draw_foreground
-from . import vfx
+from . import steelblade, vfx
+from .blur import directional, shutter
+
+FRAME = 1.0 / 24.0
 from .clash import (BLUE, BLUE_DARK, DESIGN_H, DESIGN_W, DURATION, FIG_SCALE, FPS,
                     GROUND, INK, RED, RED_DARK, STANCE, build)
 from .poses import to_pose
-from .insert import CUTS as INSERTS, cut_at, draw_insert
+from .insert import CUTS as INSERTS, draw_insert
 from .core import SEG, SEGMENT_ORDER, solve
 from .draw import Canvas, Cam
 
@@ -282,13 +285,31 @@ class Overlay:
 _scene_cache = {}
 
 
+def cuts_of(scene):
+    return scene.get("cuts") or INSERTS
+
+
+def cut_at(t: float, scene=None):
+    """The close-up register: instant on the blow, then a held push-in."""
+    for start, dur, side, expr, kind in cuts_of(scene or {}):
+        if start <= t < start + dur:
+            return (start, dur, side, expr, kind), (t - start) / dur
+    return None
+
+
 def scene(set_name: str = "mountain"):
     """The choreography is deterministic: build it once per process and set."""
     if set_name not in _scene_cache:
-        sc = build(set_name)
-        sc["bg_path"] = os.path.join(ASSETS, SET_FILES.get(set_name, "mountain_background.png"))
+        if set_name.startswith("steel"):
+            from .steel import build as steel_build
+            base = "desert" if "desert" in set_name else "mountain"
+            sc = steel_build(base)
+        else:
+            base = set_name
+            sc = build(set_name)
+        sc["bg_path"] = os.path.join(ASSETS, SET_FILES.get(base, "mountain_background.png"))
         sc["ground_path"] = os.path.join(
-            ASSETS, GROUND_FILES.get(set_name, "ground_mountain.png"))
+            ASSETS, GROUND_FILES.get(base, "ground_mountain.png"))
         sc["puffs"] = vfx.build_puffs((sc["red"], sc["blue"]))
         _scene_cache[set_name] = sc
     return _scene_cache[set_name]
@@ -817,7 +838,11 @@ def draw_impacts(cv: Canvas, impacts, t: float, overlay_flash: list,
         if bursts and age < (0.42 if final else 0.26):
             k = age / (0.42 if final else 0.26)
             grow = 1 - (1 - k) ** 2
-            r = (16 + 30 * size) * u * (0.55 + 0.75 * grow) * (1 - 0.3 * k)
+            # a blade clash already has sparks and two steel edges in the same
+            # few pixels: a full-size burst star swallows the swords, so keep it
+            # tight enough that the X of the blades still reads
+            base = (11 + 19 * size) if e.get("sparks") else (14 + 25 * size)
+            r = base * u * (0.55 + 0.75 * grow) * (1 - 0.3 * k)
             cv.polygon(star(cx, cy, r, r * 0.40, 7 if not final else 9,
                             0.4 + e["t"] * 2.7), (255, 255, 255),
                        alpha=int(245 * (1 - k) ** 0.6), width=max(2.0, 4.4 * u),
@@ -838,15 +863,17 @@ def draw_impacts(cv: Canvas, impacts, t: float, overlay_flash: list,
                 rr = max(1.0, (3.4 - 2.6 * k) * u * (1.0 + 0.3 * size))
                 cv.disc((px, py), rr, (250, 246, 238))
 
-        # sparks: length decays with age
-        if bursts and age < 0.30:
+        # sparks: length decays with age. Not on a blade clash -- there the
+        # real steel sparks are already on screen, and these straight rays read
+        # as extra swords
+        if bursts and age < 0.30 and not e.get("sparks"):
             k = age / 0.30
             rng = np.random.default_rng(int(e["t"] * 977) % 65537)
             base = 0.5 + e["t"] * 1.7
             n_sp = 6 + (3 if final else 0)
             for i in range(n_sp):
                 a = base + i * math.tau / n_sp
-                ln = (20 + 46 * size) * u * (1 - k) ** 1.4
+                ln = (14 + 30 * size) * u * (1 - k) ** 1.4
                 r0 = (10 + 12 * size) * u
                 p0 = (cx + math.cos(a) * r0, cy + math.sin(a) * r0)
                 p1 = (cx + math.cos(a) * (r0 + ln), cy + math.sin(a) * (r0 + ln))
@@ -1017,6 +1044,40 @@ def draw_titles(cv: Canvas, scene, t: float) -> None:
                       (236, 230, 218), alpha=int(a * 0.85), spacing=3)
 
 
+# ---------------------------------------------------------------------- weapon
+def draw_weapon(cv: Canvas, track, t: float, sk) -> None:
+    """The sword in the near hand, and the arc of the swing it is in the middle of.
+
+    The blade hangs off the *solved* wrist, so it cannot drift from the arm; the
+    arc is the region between where the tip was 40 ms ago and where it is now,
+    which is the same trick the limb trails use, scaled up to a two-foot sword.
+    """
+    w = getattr(track, "weapon", None)
+    if not w:
+        return
+    sk = sk or track.skel(t)
+    # a man on the floor has dropped his sword: an airborne blade hanging off a
+    # wrist nobody can see reads as a floating white line
+    if sk.head[1] > 470.0:
+        return
+    length = w.get("len", 92.0) * (track.pose_at(t).scale or 1.0)
+    sid = w.get("sid", 6)
+    ang = sk.tip_angle(sid)
+    # the point's own path over the last eighth of a second: a slash is a line
+    # drawn in the air, and this is that line
+    tips = []
+    for k in (4, 3, 2, 1, 0):
+        tk = max(0.0, t - 0.030 * k)
+        sx = track.skel(tk)
+        tips.append(steelblade.tip_of(sx.pts[sid], sx.tip_angle(sid), length))
+    path = sum(math.hypot(tips[i + 1][0] - tips[i][0], tips[i + 1][1] - tips[i][1])
+               for i in range(len(tips) - 1))
+    power = min(1.0, max(0.0, (path - 26.0) / 150.0))
+    steelblade.slash_trail(cv, tips, power)
+    steelblade.draw_blade(cv, sk.pts[sid], ang, length,
+                          glow=min(1.0, power * 1.4))
+
+
 # ----------------------------------------------------------------------- frame
 def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image.Image:
     """One finished frame at design size, scaled down if a smaller size is asked.
@@ -1039,7 +1100,7 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
     # camera shake — so the instant of contact is one held frame. Only the
     # impact flash and the HUD stay on the real clock: the world freezes, the
     # blow rings out.
-    cut = cut_at(t)
+    cut = cut_at(t, scene)
     if cut is None:
         draw_background(cv, cam_state, scene)
         # craters and blood already on the floor: drawn before the bodies so a
@@ -1055,15 +1116,16 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
             return cv.img.resize((w, h), Image.LANCZOS)
         return cv.img
 
-    for tr in (scene["red"], scene["blue"]):
+    # a scene is a list of fighters: the duel the film has been built around is
+    # two, but the blade film ends one against three and nothing below cares
+    tracks = scene.get("tracks") or [scene["red"], scene["blue"]]
+    for tr in tracks:
         tr._squash = scene["squash_at"](scene["impacts"], tr.name, ta)
         tr._push = scene["push_at"](scene["impacts"], tr.name, ta, tr.facing)
 
     # far fighter first: the one further from the centre of action
-    heads = {tr.name: body(tr, ta, tr._squash, tr._push)
-             for tr in (scene["red"], scene["blue"])}
-    order = sorted((scene["red"], scene["blue"]),
-                   key=lambda tr: -abs(heads[tr.name].head[0] - 640))
+    heads = {tr.name: body(tr, ta, tr._squash, tr._push) for tr in tracks}
+    order = sorted(tracks, key=lambda tr: -abs(heads[tr.name].head[0] - 640))
 
     # contact shadows in one translucent pass, inside the band they occupy
     boxes = []
@@ -1086,6 +1148,11 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
         draw_fighter(cv, tr, ta)
     cv.flush()
 
+    # steel: the blade is drawn after the body, and the arc it cut in the air is
+    # drawn under it, so the sword passes through its own trail
+    for tr in order:
+        draw_weapon(cv, tr, ta, heads[tr.name])
+
     draw_dust(scene["dust"], ta, cv.unit(), *cv.wp((DESIGN_W * 0.5, GROUND)), cv)
     vfx.draw_puffs(cv, scene.get("puffs", ()), ta)
     vfx.shockwaves(cv, scene["impacts"], ta)
@@ -1097,6 +1164,11 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
 
     flash = []
     draw_impacts(cv, scene["impacts"], t, flash)
+    # steel on steel: hot short sparks, drawn after the burst so they read on top
+    for i, e in enumerate(scene["impacts"]):
+        if e.get("sparks") and e.get("x") is not None:
+            steelblade.sparks(cv, *cv.wp((e["x"], e["y"])), t - e["t"],
+                              e.get("size", 1.0), seed=e["t"] * 10 + i)
     cv.flush()
 
     if flash:
@@ -1110,7 +1182,7 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
     hit = vfx.impact_frame_index(scene, t)
     if hit is not None:
         seed, sub = hit
-        vfx.impact_frame(cv, [scene["red"], scene["blue"]], ta,
+        vfx.impact_frame(cv, tracks, ta,
                          seed + 0.01 * sub, draw_fighter)
         if (w, h) != (DESIGN_W, DESIGN_H):
             return cv.img.resize((w, h), Image.LANCZOS)
@@ -1118,13 +1190,21 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
 
     draw_hud(cv, scene, t)
 
-    # a whip pan leaves a streak: squash the finished frame horizontally and
-    # blend it back over itself, hardest at the start of the move
-    if cam_state["whip"] > 0.02:
-        wsh = max(16, int(DESIGN_W * (1.0 - 0.11 * cam_state["whip"])))
-        streak = cv.img.resize((wsh, DESIGN_H), Image.BILINEAR).resize(
-            (DESIGN_W, DESIGN_H), Image.BILINEAR)
-        cv.img = Image.blend(cv.img, streak, 0.55 * cam_state["whip"])
+    # motion blur, from the camera's own velocity: a whip pan drags the frame
+    # along the path it travelled, and a punch-in drags it outward. This is a
+    # real shutter (shift and average), not a horizontal squash: the parts that
+    # did not move stay sharp.
+    prev = camera(scene, t - FRAME, scene["clock"].at(t - FRAME))
+    if prev["shot"] is cam_state["shot"]:
+        dx, dy = shutter(cam_state, (prev["x"], prev["y"]), cv.unit())
+        mag = (dx * dx + dy * dy) ** 0.5
+        if mag > 1.5:
+            # at 24 fps a full exposure would smear a whip into mush: a third of
+            # the frame's travel is what reads as speed instead of as a mistake
+            amt = min(1.0, 0.55 + 0.35 * cam_state["whip"])
+            scale = min(1.0, 34.0 / mag)
+            cv.img = directional(cv.img, dx * scale * amt, dy * scale * amt,
+                                 samples=8)
 
     # bloom: only while something hot is on screen, because it is not free
     hot = any(0.0 <= t - e["t"] < 0.34 for e in scene["impacts"])
@@ -1374,7 +1454,7 @@ def synth_audio(scene, duration=DURATION) -> np.ndarray:
         add(hits, thud(0.3, kind="body", length=0.22, seed=int(tt_ * 100)), tt_, 0.30,
             pan=-0.2)
     # the three close-ups: a blow heard from inside the skull
-    for i, (start, dur, side, expr, kind) in enumerate(INSERTS):
+    for i, (start, dur, side, expr, kind) in enumerate(cuts_of(scene)):
         add(hits, critical_hit(1.25 if kind == "xray" else 0.9, seed=71 + i), start,
             1.05 if kind == "xray" else 0.85, pan=(-0.4 if side == "red" else 0.4))
 
@@ -1391,7 +1471,7 @@ def synth_audio(scene, duration=DURATION) -> np.ndarray:
         duck[i0:i1] = np.minimum(duck[i0:i1], 1.0 - depth * env)
     # and the bed drops out entirely under a close-up: the picture has stopped,
     # so the music must too, or the slow motion does not read as slow
-    for start, dur, side, expr, kind in INSERTS:
+    for start, dur, side, expr, kind in cuts_of(scene):
         i0 = int(max(0, start - 0.02) * SR)
         i1 = min(n, int((start + dur * 0.9) * SR))
         if i0 >= i1:

@@ -37,10 +37,13 @@ class Cam:
 class Canvas:
     """Thin wrapper over aggdraw with a camera, round caps and soft shadows."""
 
-    def __init__(self, w: int, h: int, cam: Cam):
+    def __init__(self, w: int, h: int, cam: Cam, bg=(242, 240, 235)):
         self.w, self.h = w, h
         self.cam = cam
-        self.img = Image.new("RGB", (w, h), (242, 240, 235))
+        # bg=None is the asset-export mode: the page is transparent, so a sword
+        # or a spark burst can be saved as a PNG and reused anywhere
+        self.img = (Image.new("RGB", (w, h), bg) if bg is not None
+                    else Image.new("RGBA", (w, h), (0, 0, 0, 0)))
         self.d = ImageDraw.Draw(self.img)
         self._draw = None
 
