@@ -37,7 +37,7 @@ ARM_REACH = 0.96
 
 def P(torso=-84.0, *, foot_l=(26.0, 0.0), foot_r=(-30.0, 0.0),
       a_up=64.0, a_fore=-14.0, b_up=74.0, b_fore=6.0, head=0.0, crouch=0.0,
-      air=0.0) -> dict:
+      air=0.0, hip=None) -> dict:
     """One pose.
 
     ``torso``   spine angle (hip -> neck), e.g. -84 is nearly upright, -70 leans in
@@ -48,9 +48,13 @@ def P(torso=-84.0, *, foot_l=(26.0, 0.0), foot_r=(-30.0, 0.0),
     ``b_*``     near arm
     ``crouch``  extra hip drop, for ducks and landings
     ``air``     whole-body lift off the floor, for jumps
+    ``hip``     pinned hip height above the floor, for a body that has gone down
     """
-    return dict(torso=torso, foot_l=foot_l, foot_r=foot_r, a_up=a_up, a_fore=a_fore,
-                b_up=b_up, b_fore=b_fore, head=head, crouch=crouch, air=air)
+    out = dict(torso=torso, foot_l=foot_l, foot_r=foot_r, a_up=a_up, a_fore=a_fore,
+               b_up=b_up, b_fore=b_fore, head=head, crouch=crouch, air=air)
+    if hip is not None:
+        out["hip"] = hip
+    return out
 
 
 def fade(p: dict, **kw) -> dict:
@@ -129,7 +133,8 @@ def _arm_angles(up: float, fore: float, facing: int):
 def to_pose(p: dict, x: float, ground: float, facing: int = 1, scale: float = 1.0) -> Pose:
     q = p if facing > 0 else mirror(p)
     f = 1 if facing > 0 else -1
-    hh = _hip_height(q["foot_l"], q["foot_r"]) * scale
+    # a fallen fighter cannot hold its hips up, so a pose may pin the hip height
+    hh = (q["hip"] if "hip" in q else _hip_height(q["foot_l"], q["foot_r"])) * scale
     hip_y = ground - hh + q["crouch"] - q.get("air", 0.0)
     hip = (0.0, 0.0)
     # feet are expressed relative to the hip, in facing space
@@ -242,6 +247,39 @@ TIRED = P(torso=-64, foot_l=(24, 0), foot_r=(-30, 0),
 SQUARE = P(torso=-84, foot_l=(30, 0), foot_r=(-30, 0),
            a_up=48, a_fore=-70, b_up=42, b_fore=-58)
 
+# the finish: dropping to the knees, slumping forward, and standing over it
+KNEEL = P(torso=-58, hip=60, foot_l=(62, 0), foot_r=(-64, 8),
+          a_up=84, a_fore=-10, b_up=92, b_fore=2, head=16)
+
+SLUMP = P(torso=-36, hip=44, foot_l=(70, 0), foot_r=(-76, 12),
+          a_up=96, a_fore=20, b_up=104, b_fore=30, head=34)
+
+VICTORY = P(torso=-92, foot_l=(34, 0), foot_r=(-36, 0),
+            a_up=-112, a_fore=-98, b_up=-70, b_fore=-104, head=-16, crouch=-8)
+
+
+# ---------------------------------------------------------- fight-finish poses
+# a sweep: the leg goes out low and long, the body sits behind it
+SWEEP = P(torso=-64, foot_l=(24, 0), foot_r=(120, 10),
+          a_up=60, a_fore=-58, b_up=90, b_fore=-6, head=12, crouch=34)
+
+# a flying kick: both feet off the floor, the lead leg extended
+AERIAL_KICK = P(torso=-92, foot_l=(112, 72), foot_r=(-20, 44),
+                a_up=48, a_fore=-58, b_up=20, b_fore=-26, head=4, air=86)
+
+# going down: the knees give, the spine tips back
+FALL = P(torso=-52, hip=96, foot_l=(-26, 0), foot_r=(-58, 0),
+         a_up=26, a_fore=-62, b_up=38, b_fore=-50, head=-12)
+
+# on the floor: hips low, torso along the ground, arms slack
+DOWN = P(torso=-8, hip=34, foot_l=(-100, 0), foot_r=(-122, 0),
+         a_up=18, a_fore=-64, b_up=4, b_fore=-38, head=-10)
+
+# pushing back up off the floor
+RECOVER = P(torso=-62, hip=74, foot_l=(-20, 0), foot_r=(-66, 0),
+            a_up=52, a_fore=-64, b_up=64, b_fore=-46, head=8)
+
+
 LIBRARY = {
     "idle": IDLE, "guard": GUARD, "tight": TIGHT, "jab": JAB, "cross": CROSS,
     "hook": HOOK, "upper": UPPERCUT, "block_hi": BLOCK_HI, "block_mid": BLOCK_MID,
@@ -249,4 +287,6 @@ LIBRARY = {
     "kick_low": KICK_LOW, "kick_hi": KICK_HI, "knee": KNEE, "clinch": CLINCH,
     "shove": SHOVE, "hit_head": HIT_HEAD, "hit_body": HIT_BODY, "land": LANDED,
     "air": AIRBORNE, "one_leg": ONE_LEG, "tired": TIRED, "square": SQUARE,
+    "kneel": KNEEL, "slump": SLUMP, "victory": VICTORY, "sweep": SWEEP,
+    "aerial": AERIAL_KICK, "fall": FALL, "down": DOWN, "recover": RECOVER,
 }

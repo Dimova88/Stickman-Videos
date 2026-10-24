@@ -1,10 +1,16 @@
 # Stickman-Videos
 
-Two stick figures, thirty seconds, one fight. Rendered headless from a
-script — no app, no timeline clicking, no stock assets.
+Two stick figures, one mountain summit, one fight. Rendered headless from a
+script — no editor, no timeline clicking, no stock assets.
 
-**Watch:** [`renders/fight_1080p.mp4`](renders/fight_1080p.mp4) — 1920×1080,
-24 fps, 30.0 s, stereo audio.
+**Watch:**
+
+| file | what it is |
+| --- | --- |
+| [`renders/mountain_clash_720p.mp4`](renders/mountain_clash_720p.mp4) | **Mountains Clash**, 30 s test: 1280×720, 24 fps, HUD, procedural soundtrack |
+| [`renders/storyboard.jpg`](renders/storyboard.jpg) | 12-moment storyboard of the same fight |
+| [`renders/fight_1080p.mp4`](renders/fight_1080p.mp4) | the earlier clean-background 1080p fight (no HUD) |
+
 
 ## What this is
 
@@ -24,13 +30,17 @@ into hip/knee/ankle angles, and the fight is those poses keyed over time.
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install numpy scipy pillow aggdraw imageio-ffmpeg
+.venv/bin/pip install numpy pillow aggdraw imageio-ffmpeg
 
-# 30 s film at 1080p (about 80 s on 2 cores)
+# Mountains Clash, 30 s, 1280x720 (about 47 s on 2 cores)
+.venv/bin/python tools/render_clash.py --w 1280 --out renders/mountain_clash_720p.mp4
+
+# 12-moment storyboard, and a fast low-res slice while iterating
+.venv/bin/python tools/render_clash.py --storyboard 12 --w 960
+.venv/bin/python tools/render_clash.py --w 640 --start 18 --end 24 --out /tmp/slice.mp4
+
+# the earlier clean-background fight at 1080p (about 85 s)
 .venv/bin/python tools/render_fight.py --w 1920 --out renders/fight_1080p.mp4
-
-# stills while iterating
-.venv/bin/python tools/render_fight.py --stills 3.05,13.4,28.0 --w 960
 ```
 
 ## How it is built
@@ -42,7 +52,10 @@ python3 -m venv .venv
 | `fight/poses.py` | the pose library: 25 poses (guard, jab, cross, hook, uppercut, kicks, knee, clinch, hit reactions, airborne, tired) |
 | `fight/choreo.py` | the 30 s fight — pose keys + root path per fighter, spacing rules, camera, hit/hurt events |
 | `fight/film.py` | frame loop, impact stars, speed streaks, dust, shake, synthesised audio, MP4 encode |
+| `fight/clash.py` | **Mountains Clash** choreography: keyed poses + 29 impacts + camera + on-screen text |
+| `fight/clashfilm.py` | the Mountains Clash renderer: landscape crop, trails, impacts, dust, HUD, procedural audio, FFmpeg pipe |
 | `tools/pose_sheet.py` | renders the whole pose library to one contact sheet — the tool used to check anatomy |
+| `assets/mountain_background.png` | 1376×768 painted mountain arena (generated for this project, no third-party art) |
 
 ### The choreography, beat by beat
 
@@ -97,7 +110,58 @@ The current version authors **body angles, not targets**:
 * Audio is synthesised (sub-thump impacts, swept-noise whooshes, a pulse bed) —
   no samples, so nothing to license.
 
+## Mountains Clash: how the 30 s test is built
+
+The reference process, reimplemented end to end:
+
+1. **Background.** One 1376×768 painted plate is scaled to 1320×742; each frame
+   crops a 1280×720 window from it, offset by a slow camera drift plus the
+   impact shake, and a soft vertical/radial vignette is laid over the top. The
+   landscape never moves in 3D — only the crop does.
+2. **Figures.** The 10-segment Pivot skeleton from StykAnimate. Rear limbs are
+   drawn darker, every limb gets an ink outline so it reads against the peaks,
+   the head is a white disc with a coloured rim, and a contact shadow widens and
+   fades while the fighter is airborne.
+3. **Keyframes.** Red faces right, blue faces left; every pose is mirrored for
+   blue. A key is `time · x · pose`, interpolated with smoothstep
+   (`u²·(3−2u)`) on the root, the height and every joint.
+4. **Impacts.** 29 entries, each with instant, screen position, colour, type
+   (`block` / `hit` / `clash` / `final`), intensity and damage. That one list
+   drives body reactions, stars, rings, particles, sparks, camera shake, health
+   bars and the soundtrack — nothing is hand-placed twice.
+5. **Effects.** Trails compare each hand and foot with where it was 0.075 s ago;
+   impacts get a white flash, an expanding ring, a radial star, decaying sparks
+   and seeded particles (fixed seeds, so renders are reproducible); 11 dust
+   events throw 12+ particles per landing and sweep.
+6. **HUD.** Health bars (damage eased over 0.32 s), a timer, MOUNTAIN CLASH /
+   RED VS BLUE / FIGHT! / DOWN! / K.O. / BLUE WINS / VICTORY ON THE SUMMIT,
+   MOUNTAIN • ROUND 1, thin cinematic bars and fades.
+7. **Sound.** Fully synthesised at 44.1 kHz stereo: a low pulse bed, kick on the
+   half-second, snare on the off-beats, hats on the sixteenths, whooshes before
+   every strike, low thuds plus filtered noise for hits, a metallic component
+   for blocks, a deeper hit for the finisher, constant-power panning by screen
+   position, and a C–E–G–C major rise after the win.
+8. **Encode.** 720 frames go straight into FFmpeg as raw RGB (no PNG dump),
+   libx264 CRF 18 yuv420p, then the WAV is muxed in as 192 kbps AAC with
+   `+faststart`.
+
+### Beat sheet
+
+| time | beat |
+| --- | --- |
+| 0–2.4 | title, both step in, FIGHT! |
+| 2.6–5.0 | red jabs and crosses, blue slips and counters with a jab-cross that lands |
+| 5.0–7.6 | blue's body kick is blocked, high kick slips past, red sweeps, blue jumps it |
+| 7.6–9.6 | red's uppercut drops blue — DOWN! — blue gets up |
+| 9.6–12.4 | blue's jab-cross, then a flying kick that puts red on the floor |
+| 12.5–16.4 | exchange, fists clash, blue's high kick and sweep, uppercut drops red again |
+| 16.8–19.6 | red's comeback: cross, high kick, aerial kick — blue goes down |
+| 20.2–23.4 | both up, second clash, blue's jab-cross-kick sequence |
+| 23.4–25.4 | blue's aerial kick and the finishing uppercut — K.O. |
+| 25.4–30 | blue's victory pose, BLUE WINS, fade to black |
+
 ## Status
 
-30-second test, third pass on the motion. Next: longer choreography, more
-camera moves, and a second fighter archetype.
+30-second tests, two of them: the clean 1080p fight, and Mountains Clash on the
+landscape set with the full HUD and soundtrack. Next: the one-minute version
+with the same pipeline, then longer choreography and more camera angles.

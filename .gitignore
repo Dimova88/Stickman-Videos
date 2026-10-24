@@ -9,3 +9,6 @@ __pycache__/
 *.pyc
 .venv/
 *.mp4.tmp
+
+# iteration stills
+renders/preview/
