@@ -163,7 +163,7 @@ def slash_trail(cv, tips, power: float = 1.0, width: float = 13.0) -> None:
     actually travelled: thick and bright at the blade, a whisker at the tail,
     always ending exactly where the point of the sword is now.
     """
-    if power <= 0.05 or len(tips) < 3:
+    if power <= 0.15 or len(tips) < 3:
         return
     u = cv.unit()
     pts = [cv.wp(p) for p in tips]
