@@ -255,14 +255,25 @@ def build(set_name: str = "mountain") -> dict:
     # ------------------------------------------------- 14.2-16.6 blue takes over
     blue.key(14.30, fade(T, torso=-74), 686, "out")
     blue.key(14.58, PS.KICK_HI, 662, "snap")
-    red.key(14.56, PS.SLIP, 652, "snap")
-    impact(14.58, "block", 0.7, by="blue")
+    red.key(14.56, PS.DUCK, 656, "snap")
+    impact(14.58, "block", 0.45, by="blue")
     blue.key(14.90, T, 674, "out")
 
-    blue.key(15.14, PS.SWEEP, 668, "snap")
-    red.key(15.12, PS.AIRBORNE, 640, "snap")
-    red.key(15.44, PS.LANDED, 636, "snap")
-    dust(15.46)
+    # a chain, not a trade: the high kick is ducked, red comes in underneath it,
+    # takes the collar, knees the body and throws blue off him. Each action feeds
+    # the next, so the exchange has a shape instead of being separate hits.
+    red.key(14.86, PS.CLINCH, 678, "out")
+    blue.key(14.92, fade(T, torso=-70), 666, "out")
+    impact(14.92, "block", 0.20, by="red")
+
+    red.key(15.14, PS.KNEE, 682, "snap")
+    blue.key(15.16, PS.HIT_BODY, 668, "snap")
+    impact(15.14, "hit", 0.62, dmg_blue=7.0, by="red")
+
+    red.key(15.42, PS.SHOVE, 690, "snap")
+    blue.key(15.46, PS.STAGGER, 702, "out")
+    impact(15.44, "hit", 0.55, dmg_blue=5.0, by="red")
+    dust(15.48)
     red.key(15.66, PS.TIGHT, 646, "out")
 
     blue.key(15.80, PS.UPPERCUT, 656, "snap")
