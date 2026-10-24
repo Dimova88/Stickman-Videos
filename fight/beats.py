@@ -401,7 +401,14 @@ def compile_beats(beats, tracks, *, guard, on_impact=None, on_dust=None,
                 # position instead of as a prop parked on the ground
                 phase = (sum(map(ord, name)) % 7) * 0.9
                 sway = 16.0 * math.sin(t0 * 1.9 + phase)
-                tr.key(t0 - 0.30, dict(waiting or guard), lanes[name] + sway, "out")
+                # a lane is an *offset* from the fight, not a fixed mark: a rival
+                # parked on a fixed coordinate ends up standing inside whatever
+                # exchange has drifted over to him, and four bodies in one place
+                # is not a fight, it is a scrum
+                lane = lanes[name]
+                x_lane = (lane if abs(lane) > 260.0 else end + lane)
+                x_lane = max(540.0, min(1230.0, x_lane))
+                tr.key(t0 - 0.30, dict(waiting or guard), x_lane + sway, "out")
 
         if on_impact:
             on_impact(b)

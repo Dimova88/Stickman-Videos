@@ -190,6 +190,11 @@ def anchor_point(scene, shot, t: float, zoom: float):
         # frame the fist *and* the head it is about to reach, so the dive reads
         # as a punch closing in rather than a close-up of a floating hand
         return (fist[0] * 0.35 + far[0] * 0.65, far[1] + 58.0)
+    if kind == "air":
+        # both men are off the floor: framing them on the ground line cuts their
+        # heads off, so the camera aims at the air between them instead
+        return ((sa.head[0] + sb.head[0]) * 0.5,
+                min(sa.head[1], sb.head[1]) - 66.0 + shot.get("dy", 0.0))
     if kind == "high":
         # a raised camera sits above the pair and looks *down* at them, so the
         # frame is aimed below the heads: the floor fills the bottom and the

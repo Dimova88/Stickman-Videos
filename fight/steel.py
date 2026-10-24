@@ -188,10 +188,10 @@ def build(set_name: str = "mountain") -> dict:
         # -- D. aerial_juggle_slam: off the floor, both of them ------------
         B(7.22, "red", "rising_dragon_slash", "slate", gap=48, launch=140.0,
           hold_air=0.40, from_x=886, to_x=930, size=1.1),
-        B(7.48, "red", "air_pursuit_slash", "slate", gap=44, air=132.0,
+        B(7.48, "red", "air_pursuit_slash", "slate", gap=44, air=104.0,
           launch=124.0, hold_air=0.30, chain=True, from_x=930, to_x=948,
           size=1.0),
-        B(7.68, "red", "air_pursuit_slash", "slate", gap=42, air=124.0,
+        B(7.68, "red", "air_pursuit_slash", "slate", gap=42, air=96.0,
           launch=104.0, hold_air=0.24, chain=True, from_x=948, to_x=964,
           size=1.0),
         B(7.96, "red", "air_meteor_slam", "slate", gap=40, air=40.0,
@@ -220,10 +220,10 @@ def build(set_name: str = "mountain") -> dict:
         # -- H. the second juggle, and the second kill ---------------------
         B(13.30, "red", "rising_dragon_slash", "teal", gap=46, launch=140.0,
           hold_air=0.36, from_x=800, to_x=880, size=1.1),
-        B(13.52, "red", "air_pursuit_slash", "teal", gap=44, air=132.0,
+        B(13.52, "red", "air_pursuit_slash", "teal", gap=44, air=104.0,
           launch=122.0, hold_air=0.28, chain=True, from_x=880, to_x=898,
           size=1.0),
-        B(13.72, "red", "air_pursuit_slash", "teal", gap=42, air=124.0,
+        B(13.72, "red", "air_pursuit_slash", "teal", gap=42, air=96.0,
           launch=104.0, hold_air=0.22, chain=True, from_x=898, to_x=912,
           size=1.0),
         B(14.04, "red", "air_meteor_slam", "teal", gap=40, air=40.0,
@@ -311,7 +311,10 @@ def build(set_name: str = "mountain") -> dict:
                   # one rival waits on each side of the arena: a crowd all on
                   # one side is a chorus line, and it also means the hero never
                   # has to turn round
-                  lanes={"blue": 588.0, "teal": 1152.0, "slate": 1228.0},
+                  # offsets from the fight, not marks on the floor: blue keeps
+                  # the left side, teal and slate the right, and they drift with
+                  # the action instead of being stood on
+                  lanes={"blue": -350.0, "teal": 330.0, "slate": 430.0},
                   waiting=E_GUARD)
 
     # the walk-in ends where the first beat begins
@@ -493,13 +496,17 @@ SHOTS_STEEL = (
          dof=0.08, style="cut", ground=0.79),
     dict(t0=6.10, t1=6.90, anchor="action", zoom=1.16, follow=1.0, dof=0.10,
          style="whip", ground=0.78, zoom_hit=0.10),
-    dict(t0=6.90, t1=8.10, anchor="down", zoom=1.34, follow=1.0, dof=0.16,
-         style="cut", ground=0.75),
+    # the juggle: both men are off the floor, so framing them on the ground
+    # line cuts their heads off — the camera goes up with them
+    dict(t0=6.90, t1=8.10, anchor="air", zoom=0.86, z1=0.94, follow=1.0,
+         dof=0.08, style="cut", ground=0.68),
     dict(t0=8.10, t1=9.60, anchor="action", zoom=1.00, z1=1.06, follow=0.8,
          dof=0.05, style="cut", ground=0.80),
     dict(t0=9.60, t1=11.40, anchor="down", zoom=1.30, follow=1.0, dof=0.18,
          style="whip", ground=0.74),
-    dict(t0=11.40, t1=14.20, anchor="action", zoom=1.04, z1=1.12, follow=1.0,
+    dict(t0=13.16, t1=14.20, anchor="air", zoom=0.86, z1=0.96, follow=1.0,
+         dof=0.08, style="cut", ground=0.68),
+    dict(t0=11.40, t1=13.16, anchor="action", zoom=1.04, z1=1.12, follow=1.0,
          dof=0.05, style="cut", ground=0.79),
     dict(t0=14.20, t1=16.40, anchor="action", zoom=0.94, z1=1.00, follow=0.8,
          dof=0.0, style="cut", ground=0.80),
