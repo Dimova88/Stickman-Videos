@@ -18,8 +18,8 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from .camera import camera
-from .closeups import draw_ots
 from .layers import draw_foreground
+from . import vfx
 from .clash import (BLUE, BLUE_DARK, DESIGN_H, DESIGN_W, DURATION, FIG_SCALE, FPS,
                     GROUND, INK, RED, RED_DARK, STANCE, build)
 from .poses import to_pose
@@ -289,6 +289,7 @@ def scene(set_name: str = "mountain"):
         sc["bg_path"] = os.path.join(ASSETS, SET_FILES.get(set_name, "mountain_background.png"))
         sc["ground_path"] = os.path.join(
             ASSETS, GROUND_FILES.get(set_name, "ground_mountain.png"))
+        sc["puffs"] = vfx.build_puffs((sc["red"], sc["blue"]))
         _scene_cache[set_name] = sc
     return _scene_cache[set_name]
 
@@ -307,7 +308,9 @@ def shadow_box(cv: Canvas, sk, lift: float):
     if cv.cam.sqy < 0.98:
         # from above the shadow falls away from the body, long and to one side
         c = (c[0] + 18.0 * cv.unit(), c[1] + 8.0 * cv.unit())
-    rx = (26.0 + span * 0.86 + 18.0 * lift) * cv.unit() * sk.scale
+    # a body in the air casts a shadow that shrinks and thins: the lift term is
+    # negative on purpose, the opposite of what it used to do
+    rx = (26.0 + span * 0.86 - 14.0 * min(1.6, lift)) * cv.unit() * sk.scale
     if cv.cam.sqy < 0.98:
         # from above the shadow is a pool at the feet, not a band across the
         # floor: keep it under the body or the patch reads as a grey slab
@@ -321,7 +324,7 @@ def shadow(ov: "Overlay", sk, lift: float) -> None:
     """A flat contact shadow: wide and faint under an airborne fighter."""
     if ov.layer is None:
         return
-    alpha = int(max(9, 44 - 26 * lift))
+    alpha = int(max(9, 62 - 34 * lift))
     if ov.cv.cam.sqy < 0.98:
         # from above the shadow is the main thing separating a body from the rock
         alpha = int(min(80, alpha * 1.5))
@@ -533,6 +536,14 @@ def _head(cv: Canvas, c, r: float, facing: int, colour, dark, u: float,
                 (c[0] + fx * r * 0.80, c[1] + r * 0.16),
                 (c[0] + fx * r * 0.70, c[1] + r * 0.02)], colour)
 
+    if getattr(cv, "mono", False):
+        # the ink frame: one black slash where the eye is, and nothing else —
+        # a face painted in white on black has no room for an iris
+        cv.line((c[0] - fx * r * 0.55, c[1] - r * 0.16),
+                (c[0] + fx * r * 0.55, c[1] - r * 0.28),
+                max(2.0, 0.22 * r), INK, alpha=255, caps=True)
+        return
+
     ex = c[0] + fx * r * 0.32
     ey = c[1] - r * 0.06
     # a small almond, not a mask: at forty pixels the head only has room for a
@@ -548,8 +559,11 @@ def _head(cv: Canvas, c, r: float, facing: int, colour, dark, u: float,
     ix, iy = ex + fx * r * 0.10, ey - r * 0.02
     ir = r * (0.062 + 0.020 * min(1.0, glow))
     if glow > 0.02:
-        cv.circle((ix, iy), ir * 3.2, (255, 198, 120),
-                  width=0, fill=(255, 198, 120), alpha=int(40 + 110 * glow))
+        # the aura: bloom picks this up and the eye reads as lit from inside
+        cv.circle((ix, iy), ir * 4.6, (255, 190, 110),
+                  width=0, fill=(255, 190, 110), alpha=int(26 + 78 * glow))
+        cv.circle((ix, iy), ir * 2.4, (255, 208, 140),
+                  width=0, fill=(255, 208, 140), alpha=int(40 + 120 * glow))
     cv.circle((ix, iy), ir, (255, 226, 158), width=0, fill=(255, 226, 158))
     cv.circle((ix + fx * ir * 0.18, iy - ir * 0.22), ir * 0.44, (255, 252, 240),
               width=0, fill=(255, 252, 240))
@@ -1019,7 +1033,6 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
                 Cam(cam_state["x"], cam_state["y"], cam_state["zoom"],
                     cam_state["shake_x"], cam_state["shake_y"],
                     sqy=cam_state.get("sqy", 1.0)))
-    ots = cam_state["shot"].get("ots")
     # The animation clock: at every contact it stops for a few frames (the
     # hitstop) and then catches up at 2x, so nothing drifts over the film. The
     # whole painted world rides it — bodies, shadow, smear, dust, landscape and
@@ -1029,6 +1042,9 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
     cut = cut_at(t)
     if cut is None:
         draw_background(cv, cam_state, scene)
+        # craters and blood already on the floor: drawn before the bodies so a
+        # fighter stands *in* the arena rather than on top of the photograph
+        vfx.draw_marks(cv, scene, ta)
 
     if cut is not None:
         # the close-up register: a cut, not a camera move, so no HUD shadows,
@@ -1061,41 +1077,26 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
                       max(b[2] for b in boxes), max(b[3] for b in boxes)))
     if ov.layer is not None:
         for tr in order:
-            if ots and tr.name == ots:
-                continue
             shadow(ov, heads[tr.name], lifts[tr.name])
         ov.flush()
 
     for tr in order:
-        if ots and tr.name == ots:
-            continue
         trails(cv, tr, ta)
     for tr in order:
-        if ots and tr.name == ots:
-            continue
         draw_fighter(cv, tr, ta)
     cv.flush()
 
     draw_dust(scene["dust"], ta, cv.unit(), *cv.wp((DESIGN_W * 0.5, GROUND)), cv)
+    vfx.draw_puffs(cv, scene.get("puffs", ()), ta)
+    vfx.shockwaves(cv, scene["impacts"], ta)
+    vfx.blood_spray(cv, scene["impacts"], ta)
 
     # the near layer: rock and brush in front of the lens, moving against the
     # camera — the depth cue that a static plate can never give
     draw_foreground(cv, cam_state, scene["set"])
 
-    # over the shoulder: the fighter we are standing behind is a dark mass with
-    # a rim light, on whichever edge of the frame it is
-    if ots:
-        near = scene[ots]
-        far = scene["blue" if ots == "red" else "red"]
-        side = "left" if near.skel(ta).head[0] < far.skel(ta).head[0] else "right"
-        draw_ots(cv, side, near.colour)
-
-
-
     flash = []
-    # over the shoulder the contact happens behind (or beside) the near body, so
-    # the star burst would hang in the sky with nothing at its centre
-    draw_impacts(cv, scene["impacts"], t, flash, bursts=not ots)
+    draw_impacts(cv, scene["impacts"], t, flash)
     cv.flush()
 
     if flash:
@@ -1103,6 +1104,17 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
         cv.img.paste(Image.blend(cv.img, Image.new("RGB", (DESIGN_W, DESIGN_H),
                                                    (255, 253, 246)), a / 255.0),
                      (0, 0))
+
+    # one or two frames of pure black and white ink on the heaviest hits: the
+    # picture stops being a photograph of a fight and becomes a drawing of one
+    hit = vfx.impact_frame_index(scene, t)
+    if hit is not None:
+        seed, sub = hit
+        vfx.impact_frame(cv, [scene["red"], scene["blue"]], ta,
+                         seed + 0.01 * sub, draw_fighter)
+        if (w, h) != (DESIGN_W, DESIGN_H):
+            return cv.img.resize((w, h), Image.LANCZOS)
+        return cv.img
 
     draw_hud(cv, scene, t)
 
@@ -1113,6 +1125,11 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
         streak = cv.img.resize((wsh, DESIGN_H), Image.BILINEAR).resize(
             (DESIGN_W, DESIGN_H), Image.BILINEAR)
         cv.img = Image.blend(cv.img, streak, 0.55 * cam_state["whip"])
+
+    # bloom: only while something hot is on screen, because it is not free
+    hot = any(0.0 <= t - e["t"] < 0.34 for e in scene["impacts"])
+    if hot:
+        cv.img = vfx.bloom(cv.img, 0.55)
 
     # fades
     fade = 0.0

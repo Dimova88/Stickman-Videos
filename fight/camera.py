@@ -71,7 +71,7 @@ SHOTS = (
          dof=0.10, style="cut", ground=0.79),
     # the clash of fists at 13.44 gets its own push, then the insert cuts in
     # over the shoulder: you are standing behind red, watching blue come in
-    dict(t0=12.75, t1=13.44, anchor="ots", ots="red", zoom=1.34, follow=1.0,
+    dict(t0=12.75, t1=13.44, anchor="action", zoom=1.32, follow=1.0,
          dof=0.34, style="cut", ground=0.78, zoom_hit=0.10),
     dict(t0=13.44, t1=13.88, anchor="action", zoom=1.10, follow=1.0,
          dof=0.0, style="cut", ground=0.80),
@@ -86,7 +86,7 @@ SHOTS = (
          dof=0.28, style="whip", ground=0.73, zoom_hit=0.05),
     dict(t0=17.45, t1=17.80, anchor="action", zoom=1.10, follow=1.0,
          dof=0.08, style="cut", ground=0.79),
-    dict(t0=17.80, t1=18.20, anchor="ots", ots="blue", zoom=1.34, follow=1.0,
+    dict(t0=17.80, t1=18.20, anchor="action", zoom=1.30, follow=1.0,
          dof=0.34, style="cut", ground=0.78, zoom_hit=0.08),
     dict(t0=18.20, t1=18.95, anchor="action", zoom=1.12, z1=1.16, follow=1.0,
          dof=0.08, style="cut", ground=0.79),
@@ -97,7 +97,7 @@ SHOTS = (
          dof=0.30, style="whip", ground=0.73, zoom_hit=0.05),
     dict(t0=20.15, t1=20.95, anchor="action", zoom=1.08, z1=1.14, follow=1.0,
          dof=0.06, style="cut", ground=0.80),
-    dict(t0=20.95, t1=21.40, anchor="ots", ots="blue", zoom=1.32, follow=1.0,
+    dict(t0=20.95, t1=21.40, anchor="action", zoom=1.28, follow=1.0,
          dof=0.32, style="cut", ground=0.78, zoom_hit=0.08),
     # up on the ledge again: the floor recedes to the peaks under the pair
     dict(t0=21.40, t1=22.00, anchor="high", zoom=1.02, z1=1.10, follow=0.7,
@@ -159,10 +159,6 @@ def anchor_point(scene, shot, t: float, zoom: float):
     kind = shot["anchor"]
     sa, sb = _pair(scene, t)
     y = _floor_y(shot, zoom) + shot.get("dy", 0.0)
-    if kind == "ots":
-        near = shot["ots"]
-        far = sb if near == "red" else sa
-        return (far.head[0] + (26.0 if near == "red" else -26.0), y)
     if kind == "rush":
         # the camera dives at the fist that is about to land, so the hand grows
         # into the lens because the lens goes to it — no drawn stand-in

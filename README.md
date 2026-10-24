@@ -452,12 +452,11 @@ about where to look.
 | `impact` | the last impact point: the camera arrives on the blow |
 | `winner` | the one still standing, the body in the lower third |
 | `high` | straight down the arena: the rock floor fills the frame, bodies squashed |
-| `ots` | over the shoulder of the near fighter, who becomes a dark rim-lit mass |
 | `rush` | the lens dives at the fist that is about to land |
 
 Framing is expressed as `ground` (where the floor line sits, 0.72 = low camera,
 0.80 = level) instead of a hard-coded height, so a shot reads the same at any
-zoom. 25 shots in 30 s, 4.5 s of them close-ups.
+zoom. 22 shots in 30 s, 4.5 s of them close-ups.
 
 **Three angles that needed more than camera numbers:**
 
@@ -473,12 +472,12 @@ zoom. 25 shots in 30 s, 4.5 s of them close-ups.
   0.90, which is what 25° above the eyeline actually does to a figure, and the
   frame is aimed below the heads so the arena fills the bottom of the shot.
 
-* **Over the shoulder (`ots`, 12.75–13.44, 17.8–18.2, 20.95–21.4 s).** The near
-  fighter is *not drawn*: a blurred patch (head, neck, shoulder running out of
-  the bottom corner) is composited over the finished frame with a warm rim light,
-  the head is half the frame tall, and the fighter is chosen by whose head is
-  nearer the frame edge. The punch then disappears behind the shoulder, which is
-  the whole point of the angle.
+* **~~Over the shoulder~~ — built, shown, rejected.** The near fighter was a
+  blurred dark silhouette with a rim light pasted over the frame edge. It was
+  the one element in the film that was not a body: it read as a silhouette in
+  the shot, and no amount of rim light made it a fighter. The three shots that
+  used it (12.75–13.44, 17.8–18.2, 20.95–21.4 s) are now tight lateral shots,
+  and both fighters are always drawn.
 * **Foreshortened punch (`rush`, 15.6–15.8 and 24.4–24.72 s).** A drawn fist
   rushing the lens was tried three times and read as a blue blob every time —
   the flat side-on rig has no forearms to foreshorten. What works is the camera
@@ -513,6 +512,39 @@ rides the animation clock, so it is frozen with the bodies during the hitstop.
   fighters stay sharp, because the lens is on them. It is done by blurring a
   sixth-size copy and blowing it back up: 2 ms instead of the 24 ms a Gaussian
   on the full frame costs.
+
+### Air, earth, steel and blood (*fight/vfx.py*)
+
+The star burst was the only effect in the film, and it said "impact" without
+saying "force". Four layers now, all of them geometry:
+
+* **Earth, and it stays.** Craters under every slam and the finish, a dark stain
+  where the last blow put a fighter down, dust puffs wherever a foot *hits* the
+  ground hard (sampled from the same speed the footwork uses, so a running
+  fighter kicks up a trail and a standing one does not). Marks are laid on the
+  floor at the instant they happen and are still there a minute later: laid
+  *before* the bodies, so a fighter stands in the arena rather than on top of
+  the photograph.
+* **Air.** On a clash or a heavy hit an elliptical ring of compressed air snaps
+  out — three strokes of falling alpha and a wash of displaced air, growing on
+  `1-(1-k)^3` so it leaves fast and decelerates. That is what a shockwave does;
+  a hard circle is what a lens flare does.
+* **Drag shadows.** The contact shadow is much darker than it was (62 against
+  44) and now *shrinks* with lift instead of widening, which is the whole cue
+  for "he is off the ground".
+* **Impact frames.** On the heaviest hits — clashes, landed hits of size 0.95
+  and up, the finish — the film cuts for exactly **two frames** to a black page
+  with the two bodies in white ink over calligraphy. The silhouettes are the
+  real ones, drawn through the real camera by the real renderer with the fighter
+  colours swapped for white, so nothing can drift out of step with the fight;
+  the back of every head gets one black slash where the eye is.
+* **Bloom**, gated to the 0.34 s after an impact, on a quarter-size threshold
+  pass (3 ms). The eye aura underneath it is what makes the glow read: the iris
+  now sits inside two soft amber discs, and the bloom lifts them.
+
+Blood stays minimal and matte on purpose: a sprayed red decal at this scale
+reads as litter. What is left is a blurred dark stain that grows in over a
+second where the body came down.
 
 ### Feet that step (*fight/footwork.py*)
 
@@ -570,10 +602,10 @@ figures carrying a bowed spine, articulated feet and hands, a face and speed
 deformation, three close-up inserts on the heaviest impacts (one of them an
 X-ray of the skull), hitstop and compression on every contact, a coiled wind-up
 before every landed blow, knockdowns that fly, bounce, skid and climb back up,
-no HUD at all, feet that step and skid, a chained grapple (block → clinch →
+no HUD at all, craters, drag shadows, shockwaves, blood, two-frame ink impact
+frames and a gated bloom, feet that step and skid, a chained grapple (block → clinch →
 knee → throw at 14.9 s), and a 25-shot camera with whip pans, punch-ins, floor-level
 shots, directional shake and a parallax foreground layer — now including the
-three angles that needed new art: a raised camera looking down a receding arena
-floor, over the near fighter's shoulder, and a five-frame dive onto the fist
-that is about to land. Next: chained choreography (blocks into grabs into
+two angles that needed new art: a raised camera looking down a receding arena
+floor, and a five-frame dive onto the fist that is about to land. Next: chained choreography (blocks into grabs into
 throws), bladed weapons, and the first 1-vs-many exchange.
