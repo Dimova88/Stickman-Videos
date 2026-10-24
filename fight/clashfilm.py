@@ -284,15 +284,6 @@ def draw_impacts(cv: Canvas, impacts, t: float, overlay_flash: list) -> None:
             k = age / 0.10
             overlay_flash.append(int((58 if final else 46) * (1 - k) ** 2 * size))
 
-        if age < life:
-            k = age / life
-            # expanding ring
-            ring = 0.50 if kind == "clash" else 0.62 if kind == "block" else 0.80
-            rr = (12 + 74 * size * ring) * u * (0.35 + 1.15 * (1 - (1 - k) ** 2))
-            cv.circle((cx, cy), rr, e.get("colour", (240, 236, 228)),
-                      width=max(1.6, (4.5 if final else 3.2) * u * (1 - k)),
-                      alpha=int(210 * (1 - k) ** 1.3))
-
         if age < (0.42 if final else 0.26):
             k = age / (0.42 if final else 0.26)
             grow = 1 - (1 - k) ** 2
@@ -315,10 +306,7 @@ def draw_impacts(cv: Canvas, impacts, t: float, overlay_flash: list) -> None:
                 px = cx + math.cos(ang) * dist
                 py = cy + math.sin(ang) * dist + 26 * u * k * k
                 rr = max(1.0, (3.4 - 2.6 * k) * u * (1.0 + 0.3 * size))
-                a = int(230 * (1 - k) ** 1.6)
                 cv.disc((px, py), rr, (250, 246, 238))
-                if a > 40:
-                    cv.circle((px, py), rr, INK, width=max(1.0, 1.2 * u), alpha=a)
 
         # sparks: length decays with age
         if age < 0.30:
@@ -552,58 +540,68 @@ def _swing(t):
     return np.exp(-t * 16.0) * (1.0 - np.exp(-t * 900.0))
 
 
-def thud(size=1.0, kind="hit", length=0.55):
-    """A real punch sound, built from its three parts.
+def thud(size=1.0, kind="hit", length=0.55, seed=0):
+    """A punch, built from the four parts a punch actually has.
 
-    ``body``   the low thump of a torso taking a blow (40-130 Hz, short)
-    ``flesh``  a band-limited noise burst around 300-900 Hz, the slap of skin
-    ``air``    a short high 'tick' that carries the transient on small speakers
-    Blocks and clashes are tighter and brighter; the finisher is longer and sits
-    lower; body shots get less flesh and more thump.
+    ``body``   the thump of mass behind the blow: a sine that drops in pitch
+    ``smack``  the "pak" of skin and glove: a 40 ms band-passed burst, the part
+               that makes it read as a fist and not as a door slamming
+    ``flesh``  a longer, lower noise tail, the meat of the impact
+    ``ring``   bone-on-bone for blocks and clashes only
+
+    Each kind retunes those four: blocks are short and bright, body shots are
+    dark and round, the finisher is lower and longer than everything else.
     """
     n = int(length * SR)
     t = np.arange(n) / SR
-    rng = np.random.default_rng(int(1000 + 137 * size + len(kind)))
+    # every blow gets its own noise: 29 identical hits would sound looped
+    rng = np.random.default_rng(int(1000 + 137 * size + 7919 * seed + len(kind)))
 
-    low = 118.0 - 34.0 * min(size, 1.6)
+    # ---- per-kind voicing
+    low = 112.0 - 30.0 * min(size, 1.6)
     if kind == "block":
-        low, flesh_lo, flesh_hi, hard = 165.0, 900.0, 3800.0, 1.0
+        low, smack_lo, smack_hi, tail_lo, tail_hi, hard, smack_g, body_g = (
+            150.0, 700.0, 3200.0, 300.0, 1400.0, 1.15, 0.65, 0.55)
     elif kind == "clash":
-        low, flesh_lo, flesh_hi, hard = 190.0, 1200.0, 5200.0, 1.25
+        low, smack_lo, smack_hi, tail_lo, tail_hi, hard, smack_g, body_g = (
+            165.0, 900.0, 4600.0, 400.0, 2200.0, 1.3, 0.8, 0.5)
     elif kind == "body":
-        low, flesh_lo, flesh_hi, hard = 92.0, 190.0, 700.0, 0.45
+        low, smack_lo, smack_hi, tail_lo, tail_hi, hard, smack_g, body_g = (
+            82.0, 320.0, 1500.0, 140.0, 700.0, 0.6, 0.55, 1.25)
     elif kind == "final":
-        low, flesh_lo, flesh_hi, hard = 74.0, 240.0, 1500.0, 0.9
-    else:
-        flesh_lo, flesh_hi, hard = 320.0, 2600.0, 1.15
+        low, smack_lo, smack_hi, tail_lo, tail_hi, hard, smack_g, body_g = (
+            68.0, 500.0, 3600.0, 160.0, 900.0, 1.2, 2.1, 1.15)
+    else:                                     # a clean landed punch
+        low, smack_lo, smack_hi, tail_lo, tail_hi, hard, smack_g, body_g = (
+            96.0, 700.0, 4200.0, 220.0, 1100.0, 1.15, 1.9, 0.72)
 
-    # 1. the body of the hit: a pitch-dropping sine plus its octave
-    sweep = low * (1.0 + 1.5 * np.exp(-t * 46.0))
+    # ---- 1. body: a pitch-dropping thump with a little sub underneath
+    sweep = low * (1.0 + 1.35 * np.exp(-t * 42.0))
     phase = 2 * np.pi * np.cumsum(sweep) / SR
-    body = np.sin(phase) * np.exp(-t * (13.0 if kind != "final" else 7.5))
-    body += 0.35 * np.sin(phase * 0.5) * np.exp(-t * 9.0)
-    body += 0.18 * np.sin(2 * phase) * np.exp(-t * 26.0)
+    body = np.sin(phase) * np.exp(-t * (12.0 if kind != "final" else 7.0))
+    body += 0.30 * np.sin(phase * 0.5) * np.exp(-t * 8.5)
+    body += 0.14 * np.sin(2.0 * phase) * np.exp(-t * 24.0)
 
-    # 2. the flesh: noise through a band-pass, gated by the swing curve
-    noise = rng.normal(0, 1, n).astype(np.float32)
-    flesh = _bandpass(noise, flesh_lo, flesh_hi)
-    flesh *= _swing(t) * (0.55 + 0.5 * hard)
+    # ---- 2. smack: the short bright burst that says "fist"
+    sm = _bandpass(rng.normal(0, 1, n).astype(np.float32), smack_lo, smack_hi)
+    smack_env = (1.0 - np.exp(-t * 1400.0)) * np.exp(-t * (34.0 + 10.0 * hard))
+    smack = sm * smack_env
 
-    # 3. the transient: a very short high tick, so the hit reads on phone speakers
-    tick_n = int(0.006 * SR)
-    tick = np.zeros(n, np.float32)
-    burst = _bandpass(rng.normal(0, 1, tick_n).astype(np.float32), 2200.0, 9000.0)
-    tick[:tick_n] = burst * np.linspace(1.0, 0.0, tick_n) * 0.9
+    # ---- 3. flesh: a longer, softer tail under the smack
+    fl = _bandpass(rng.normal(0, 1, n).astype(np.float32), tail_lo, tail_hi)
+    flesh = fl * _swing(t)
 
-    # 4. blocks and clashes ring a little, like bone on bone
+    # ---- 4. ring, bone on bone
     ring = np.zeros(n, np.float32)
     if kind in ("block", "clash"):
-        for f, g in ((1180.0, 0.20), (1730.0, 0.13), (2640.0, 0.08)):
+        for f, g in ((1180.0, 0.18), (1730.0, 0.12), (2640.0, 0.07)):
             ring += g * np.sin(2 * np.pi * f * t + rng.uniform(0, 6.28)) * \
                 np.exp(-t * (26.0 if kind == "block" else 17.0))
 
-    sig = body * (1.0 if kind != "block" else 0.55) + flesh * 1.7 + tick * 0.7 + ring
-    sig *= _env(n, 0.0015, length * 0.45)
+    sig = (body * body_g * 1.15 + smack * smack_g * 1.9 + flesh * 0.95 + ring)
+    sig *= _env(n, 0.0008, length * 0.5)
+    # a hair of soft clipping makes it sound recorded rather than pure
+    sig = np.tanh(sig * 1.4)
     peak = float(np.max(np.abs(sig))) or 1.0
     return (sig / peak * (0.55 + 0.22 * min(size, 1.8))).astype(np.float32)
 
@@ -693,18 +691,22 @@ def synth_audio(scene, duration=DURATION) -> np.ndarray:
         pan = (e["x"] / DESIGN_W) * 2 - 1
         kind = e["kind"]
         if kind == "block":
-            add(hits, thud(0.7, kind="block", length=0.26), e["t"], 0.95, pan)
+            add(hits, thud(0.7, kind="block", length=0.26, seed=int(e["t"] * 100)),
+                e["t"], 0.95, pan)
         elif kind == "hit":
             body_shot = abs(e["t"] - 5.16) < 0.05 or abs(e["t"] - 23.28) < 0.05
-            add(hits, thud(1.0, kind="body" if body_shot else "hit", length=0.42),
-                e["t"], 1.55, pan)
+            add(hits, thud(1.0, kind="body" if body_shot else "hit", length=0.42,
+                           seed=int(e["t"] * 100)), e["t"], 1.2, pan)
         elif kind == "clash":
-            add(hits, thud(1.2, kind="clash", length=0.42), e["t"], 1.6, pan)
+            add(hits, thud(1.2, kind="clash", length=0.42, seed=int(e["t"] * 100)),
+                e["t"], 1.25, pan)
         elif kind == "final":
-            add(hits, thud(1.8, kind="final", length=1.05), e["t"], 1.85, pan)
-            add(hits, thud(1.3, kind="clash", length=0.5), e["t"] + 0.012, 0.8, pan)
+            add(hits, thud(1.8, kind="final", length=1.05, seed=97), e["t"], 1.5, pan)
+            add(hits, thud(1.3, kind="clash", length=0.5, seed=13), e["t"] + 0.012,
+                0.8, pan)
     for tt_ in scene["dust"]:
-        add(hits, thud(0.3, kind="body", length=0.22), tt_, 0.30, pan=-0.2)
+        add(hits, thud(0.3, kind="body", length=0.22, seed=int(tt_ * 100)), tt_, 0.30,
+            pan=-0.2)
 
     # ---- 5. side-chain: the bed ducks under every hit
     duck = np.ones(n, np.float32)

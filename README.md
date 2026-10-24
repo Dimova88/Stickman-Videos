@@ -137,19 +137,23 @@ The reference process, reimplemented end to end:
    drives body reactions, stars, rings, particles, sparks, camera shake, health
    bars and the soundtrack — nothing is hand-placed twice.
 6. **Effects.** Trails compare each hand and foot with where it was 0.075 s ago;
-   impacts get a white flash, an expanding ring, a radial star, decaying sparks
-   and seeded particles (fixed seeds, so renders are reproducible); 11 dust
-   events throw 12+ particles per landing and sweep.
+   impacts get a white flash, a radial star, decaying sparks and seeded
+   particles (fixed seeds, so renders are reproducible). Deliberately **no
+   expanding ring and no outlined dots**: a coloured hoop crossing a fighter
+   reads as a circle stuck to its body, and the request was to keep the body
+   clean. 11 dust events throw 14 particles per landing and sweep.
 7. **HUD.** Health bars (damage eased over 0.32 s), a timer, MOUNTAIN CLASH /
    RED VS BLUE / FIGHT! / DOWN! / K.O. / BLUE WINS / VICTORY ON THE SUMMIT,
    MOUNTAIN • ROUND 1, thin cinematic bars and fades.
 8. **Sound.** Fully synthesised at 44.1 kHz stereo, mixed in three layers so the
    hits cut through:
-   * **hits** are built from their parts — a pitch-dropping body tone (40–130 Hz),
-     a band-passed noise burst for the slap of skin (320–2600 Hz), a 6 ms tick
-     that carries the transient on phone speakers, and a short ring for blocks
-     and clashes. Body shots sit lower and longer, the finisher lower and longer
-     still;
+   * **hits** are built from the four parts a punch has — `body` (a
+     pitch-dropping thump, 70–150 Hz), `smack` (a 40 ms band-passed burst at
+     700–4200 Hz, the *pak* that makes it read as a fist rather than a door),
+     `flesh` (a longer noise tail) and `ring` (bone on bone, blocks and clashes
+     only). Every blow has its own noise seed, so the 29 hits are not clones.
+     Body shots sit at 82 Hz and are darker, the finisher at 68 Hz with a 1 s
+     tail;
    * **the bed** (low pulse, kick on the half-second, snare on the off-beats,
      hats on the sixteenths) is side-chained: every impact ducks it ~8 dB for a
      moment, which is what makes a punch audible instead of buried;
