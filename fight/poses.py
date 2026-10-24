@@ -316,6 +316,60 @@ DOWN = P(torso=-8, hip=34, foot_l=(-100, 0), foot_r=(-122, 0),
 RECOVER = P(torso=-62, hip=74, foot_l=(-20, 0), foot_r=(-66, 0),
             a_up=52, a_fore=-64, b_up=64, b_fore=-46, head=8)
 
+# ------------------------------------------------------------- the knockdown
+# A body that is hit hard does not rotate into a lying pose: it leaves the
+# floor, arcs, lands on its back, bounces, skids, and then has to fight its way
+# back up. These are the stills of that arc. ``hip`` pins the pelvis, ``air``
+# lifts the whole figure off the floor, and every foot is *off* the ground
+# (lift > 0) so the foot painter stops snapping the soles to the floor line.
+LAUNCH = P(torso=-40, hip=70, foot_l=(-34, 26), foot_r=(-54, 40),
+           a_up=10, a_fore=-28, b_up=28, b_fore=-10, head=-18, air=16,
+           spine=6.0, grip_a=0.3, grip_b=0.3)
+
+FLIGHT = P(torso=-18, hip=42, foot_l=(-58, 22), foot_r=(-80, 34),
+           a_up=-6, a_fore=-16, b_up=18, b_fore=-2, head=-20, air=58,
+           spine=9.0, grip_a=0.2, grip_b=0.2)
+
+SLAM = P(torso=-6, hip=27, foot_l=(-88, 4), foot_r=(-112, 10),
+         a_up=-16, a_fore=-26, b_up=6, b_fore=22, head=-14, air=0,
+         spine=-6.0, toe_l=8.0, toe_r=6.0, grip_a=0.25, grip_b=0.25)
+
+BOUNCE = P(torso=-20, hip=36, foot_l=(-74, 12), foot_r=(-98, 20),
+           a_up=-6, a_fore=6, b_up=16, b_fore=34, head=-24, air=15,
+           spine=2.0, toe_l=14.0, toe_r=12.0, grip_a=0.2, grip_b=0.2)
+
+SPRAWL = P(torso=-4, hip=26, foot_l=(-112, 4), foot_r=(-44, 16),
+           a_up=-2, a_fore=12, b_up=24, b_fore=44, head=-8, air=0,
+           spine=-3.0, toe_l=8.0, toe_r=20.0, grip_a=0.25, grip_b=0.3)
+
+# the body comes back to itself: a roll onto the hip, then hands and knees
+ROLL = P(torso=-38, hip=46, foot_l=(-38, 8), foot_r=(-70, 22),
+         a_up=42, a_fore=-78, b_up=66, b_fore=-38, head=8,
+         spine=-8.0, toe_l=10.0, toe_r=8.0, grip_a=0.4, grip_b=0.4)
+
+ALL_FOURS = P(torso=-46, hip=64, foot_l=(-24, 16), foot_r=(-62, 20),
+              a_up=44, a_fore=74, b_up=38, b_fore=66, head=24,
+              spine=-10.0, toe_l=10.0, toe_r=12.0, grip_a=0.5, grip_b=0.5)
+
+# the arms give out for a beat: the chest goes back down on the floor
+GIVE = P(torso=-30, hip=38, foot_l=(-34, 12), foot_r=(-70, 16),
+         a_up=52, a_fore=62, b_up=46, b_fore=54, head=14,
+         spine=-4.0, toe_l=8.0, toe_r=10.0, grip_a=0.4, grip_b=0.4)
+
+PUSHUP = P(torso=-58, hip=88, foot_l=(-8, 10), foot_r=(-54, 12),
+           a_up=46, a_fore=52, b_up=40, b_fore=44, head=20,
+           spine=-12.0, toe_l=6.0, toe_r=8.0, grip_a=0.55, grip_b=0.55)
+
+# halfway up and not steady yet: weight on the front leg, chest still low
+STAGGER = P(torso=-68, hip=108, foot_l=(36, 0), foot_r=(-42, 0),
+            a_up=78, a_fore=-34, b_up=66, b_fore=-22, head=12, crouch=16,
+            spine=-8.0, grip_a=0.5, grip_b=0.5)
+
+# standing again, but spent: hands low, head down, shoulders round
+SPENT = P(torso=-70, foot_l=(32, 0), foot_r=(-34, 0),
+          a_up=76, a_fore=-46, b_up=68, b_fore=-32, head=10, crouch=10,
+          spine=-11.0, grip_a=0.45, grip_b=0.45)
+
 
 # ---------------------------------------------------------------- curvature
 # How each pose carries its weight: the bow of the back (`spine`, rig units at
@@ -347,6 +401,17 @@ _TUNE = {
     "FALL": dict(spine=-11.0, grip_a=0.4, grip_b=0.4),
     "DOWN": dict(spine=-4.0, grip_a=0.25, grip_b=0.25),
     "RECOVER": dict(spine=-6.0, grip_a=0.5, grip_b=0.5),
+    "LAUNCH": dict(spine=6.0, grip_a=0.3, grip_b=0.3),
+    "FLIGHT": dict(spine=9.0, grip_a=0.2, grip_b=0.2),
+    "SLAM": dict(spine=-6.0, toe_l=8.0, toe_r=6.0, grip_a=0.25, grip_b=0.25),
+    "BOUNCE": dict(spine=2.0, toe_l=14.0, toe_r=12.0, grip_a=0.2, grip_b=0.2),
+    "SPRAWL": dict(spine=-3.0, toe_l=6.0, toe_r=4.0, grip_a=0.25, grip_b=0.25),
+    "ROLL": dict(spine=-8.0, toe_l=10.0, toe_r=8.0, grip_a=0.4, grip_b=0.4),
+    "ALL_FOURS": dict(spine=-10.0, toe_l=6.0, toe_r=8.0, grip_a=0.5, grip_b=0.5),
+    "GIVE": dict(spine=-4.0, toe_l=6.0, toe_r=6.0, grip_a=0.4, grip_b=0.4),
+    "PUSHUP": dict(spine=-12.0, toe_l=4.0, toe_r=4.0, grip_a=0.55, grip_b=0.55),
+    "STAGGER": dict(spine=-8.0, grip_a=0.5, grip_b=0.5),
+    "SPENT": dict(spine=-11.0, grip_a=0.45, grip_b=0.45),
 }
 
 LIBRARY = {
@@ -358,6 +423,9 @@ LIBRARY = {
     "air": AIRBORNE, "one_leg": ONE_LEG, "tired": TIRED, "square": SQUARE,
     "kneel": KNEEL, "slump": SLUMP, "victory": VICTORY, "sweep": SWEEP,
     "aerial": AERIAL_KICK, "fall": FALL, "down": DOWN, "recover": RECOVER,
+    "launch": LAUNCH, "flight": FLIGHT, "slam": SLAM, "bounce": BOUNCE,
+    "sprawl": SPRAWL, "roll": ROLL, "all_fours": ALL_FOURS, "give": GIVE,
+    "pushup": PUSHUP, "stagger": STAGGER, "spent": SPENT,
 }
 
 # the tuning table mutates the same dicts the library holds, so `PS.GUARD` and

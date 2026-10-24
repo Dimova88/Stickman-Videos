@@ -21,6 +21,7 @@ from . import poses as PS
 from .core import Pose, solve
 from .impact import Clock, add_anticipation, compress, push_at, squash_at
 from .poses import fade, mirror, to_pose
+from .ragdoll import knockdown, reanchor
 
 FPS = 24
 DURATION = 30.0
@@ -200,14 +201,8 @@ def build(set_name: str = "mountain") -> dict:
     red.key(7.86, PS.UPPERCUT, 664, "snap")
     blue.key(7.88, PS.HIT_HEAD, 726, "snap")
     impact(7.86, "hit", 1.0, dmg_blue=9.0, by="red")
-    blue.key(8.16, PS.FALL, 754, "out")
-    blue.key(8.44, PS.DOWN, 762, "smooth")
-    dust(8.46)
+    knockdown(blue, 7.86, 9.62, throw=34.0, dust=dust)
     title(8.20, 8.60, "DOWN!", "small")
-
-    # ------------------------------------------------- 8.4-9.6 blue gets up
-    blue.key(9.02, PS.RECOVER, 748, "smooth")
-    blue.key(9.34, G, 730, "out")
     red.key(8.70, G, 640, "out")
 
     # ------------------------------------------------- 9.6-12.4 blue's counter
@@ -225,14 +220,10 @@ def build(set_name: str = "mountain") -> dict:
     red.key(10.96, PS.HIT_HEAD, 656, "snap")
     blue.key(11.28, PS.LANDED, 700, "snap")
     dust(11.30)
-    red.key(11.26, PS.FALL, 626, "out")
-    red.key(11.54, PS.DOWN, 618, "smooth")
-    dust(11.56)
     blue.key(11.60, G, 706, "out")
 
-    # ------------------------------------------------- 12.0-14.4 red recovers
-    red.key(12.10, PS.RECOVER, 632, "smooth")
-    red.key(12.44, G, 646, "out")
+    # ------------------------------------------------- 11.0-12.6 red recovers
+    knockdown(red, 10.94, 12.55, throw=32.0, dust=dust)
     blue.key(12.30, fade(G, torso=-82), 700)
 
     # ------------------------------------------------- 12.5-15.0 exchange
@@ -268,14 +259,10 @@ def build(set_name: str = "mountain") -> dict:
     blue.key(15.80, PS.UPPERCUT, 656, "snap")
     red.key(15.82, PS.HIT_HEAD, 640, "snap")
     impact(15.80, "hit", 1.05, dmg_red=10.0, by="blue")
-    red.key(16.12, PS.FALL, 624, "out")
-    red.key(16.40, PS.DOWN, 616, "smooth")
-    dust(16.42)
     blue.key(16.40, G, 668, "out")
 
-    # ------------------------------------------------- 16.8-19.6 red's comeback
-    red.key(16.96, PS.RECOVER, 630, "smooth")
-    red.key(17.30, G, 644, "out")
+    # ------------------------------------------------- 15.8-17.5 red's comeback
+    knockdown(red, 15.80, 17.45, throw=30.0, dust=dust)
     blue.key(17.20, fade(T, torso=-80), 678, "out")
 
     red.key(17.56, PS.JAB, 672, "snap")
@@ -295,14 +282,10 @@ def build(set_name: str = "mountain") -> dict:
     impact(18.98, "hit", 1.1, dmg_blue=11.0, by="red")
     red.key(19.30, PS.LANDED, 676, "snap")
     dust(19.32)
-    blue.key(19.28, PS.FALL, 726, "out")
-    blue.key(19.56, PS.DOWN, 734, "smooth")
-    dust(19.58)
     red.key(19.60, G, 668, "out")
 
-    # ------------------------------------------------- 20.2-21.6 both up
-    blue.key(20.12, PS.RECOVER, 720, "smooth")
-    blue.key(20.44, PS.GUARD, 706, "out")
+    # ------------------------------------------------- 19.0-20.4 blue gets up
+    knockdown(blue, 18.98, 20.38, throw=36.0, dust=dust)
     red.key(20.30, fade(G, torso=-80), 672)
 
     # ------------------------------------------------- 20.6-23.4 final exchange
@@ -350,17 +333,14 @@ def build(set_name: str = "mountain") -> dict:
     blue.key(24.72, PS.UPPERCUT, 664, "snap")
     red.key(24.72, PS.HIT_HEAD, 654, "snap")
     impact(24.72, "final", 1.8, dmg_red=100.0, by="blue")
-    red.key(25.02, PS.FALL, 654, "in")
-    red.key(25.30, PS.DOWN, 648, "smooth")
-    dust(25.34)
+    knockdown(red, 24.72, 30.0, throw=46.0, power=1.2, dust=dust, stay=True)
 
     # ------------------------------------------------- 25.2-30 K.O. and victory
     blue.key(25.10, fade(G, torso=-84), 690, "out")
     blue.key(25.90, PS.VICTORY, 676, "out")
     blue.key(27.40, fade(PS.VICTORY, torso=-88), 672)
     blue.key(29.20, PS.VICTORY, 668, "smooth")
-    red.key(27.20, fade(PS.DOWN, head=-14), 646, "smooth")
-    red.key(30.0, fade(PS.DOWN, head=-18), 644, "smooth")
+
 
     title(25.24, 26.85, "K.O.", "ko")
     title(26.85, 29.20, "BLUE WINS", "title")
@@ -380,6 +360,21 @@ def build(set_name: str = "mountain") -> dict:
                 (13.3, 220.0), (15.9, 220.0), (16.6, 245.0), (19.4, 245.0),
                 (20.3, 232.0), (24.4, 220.0), (25.4, 280.0), (30.0, 300.0)]
 
+    def _down(tr, t):
+        """Is this fighter off its feet, or inside a knockdown?
+
+        A body that has been knocked down is not nudged to keep the pair apart:
+        it is on the floor, and the standing fighter steps around it. Letting the
+        spacing solvers loose on those frames is what made a thrown body slide
+        sideways while it was lying still.
+        """
+        if tr.sample(t)[0].get("hip", 999.0) < 95.0:
+            return True
+        for g in getattr(tr, "_kd", ()):
+            if g["t_hit"] <= t <= g["end"]:
+                return True
+        return False
+
     def gap_at(t):
         if t <= gap_keys[0][0]:
             return gap_keys[0][1]
@@ -395,11 +390,17 @@ def build(set_name: str = "mountain") -> dict:
         for _ in range(iters):
             t = 0.0
             while t <= DURATION:
+                dr, db = _down(red, t), _down(blue, t)
+                if dr and db:
+                    t += 0.1
+                    continue
                 g = blue.skel(t).head[0] - red.skel(t).head[0]
                 want = gap_at(t)
                 if g < want - 0.5:
                     push = (want - g) * 0.5
                     for tr, sgn in ((red, -1.0), (blue, 1.0)):
+                        if (tr is red and dr) or (tr is blue and db):
+                            continue
                         ks = tr.keys
                         for i in range(len(ks) - 1):
                             t0, p0, x0, e0 = ks[i]
@@ -451,7 +452,8 @@ def build(set_name: str = "mountain") -> dict:
                     best = (score, d_now, tr, i, target)
         return best[1], best[2], best[3], best[4]
 
-    for _ in range(9):
+    def reach(iters=9):
+      for _ in range(iters):
         for e in impacts:
             t = e["t"]
             gap = abs(blue.skel(t).head[0] - red.skel(t).head[0])
@@ -505,11 +507,17 @@ def build(set_name: str = "mountain") -> dict:
         for _ in range(iters):
             t = 0.0
             while t <= DURATION:
+                dr, db = _down(red, t), _down(blue, t)
+                if dr and db:
+                    t += 0.1
+                    continue
                 g = blue.skel(t).head[0] - red.skel(t).head[0]
                 lo = min_gap(t)
                 if g < lo - 0.5:
                     push = (lo - g) * 0.5
                     for tr, sgn in ((red, -1.0), (blue, 1.0)):
+                        if (tr is red and dr) or (tr is blue and db):
+                            continue
                         ks = tr.keys
                         for i in range(len(ks) - 1):
                             t0, p0, x0, e0 = ks[i]
@@ -521,6 +529,12 @@ def build(set_name: str = "mountain") -> dict:
                                 ks[i + 1] = (t1, p1, x1 + sgn * push * w1 * step, e1)
                                 break
                 t += 0.1
+    # The knockdowns are placed from the position the contact actually ended
+    # up at, and before the reach pass, so the blows after a knockdown are
+    # solved against where the fighter really is.
+    for tr in (red, blue):
+        reanchor(tr)
+    reach()
     relax_after()
 
     # ------------------------------------------------------- impact positions

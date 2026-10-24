@@ -393,6 +393,42 @@ time to the beat: it only makes the frame that was already there read as a
 load. Because it happens before the spacing and reach
 solvers run, the gap between the pair is still solved against the coiled pose.
 
+### The knockdown: it flies, bounces, skids, and climbs back up (*fight/ragdoll.py*)
+
+The old fall was three keys — hit, `FALL`, `DOWN` — so a fighter was rotated flat
+and then stood back up in guard. There are five knockdowns in the fight and each
+one is now a short arc of seven beats plus a rise:
+
+| | what happens |
+| --- | --- |
+| +0.05 s | the feet leave the floor, body already tipping (`LAUNCH`) |
+| +0.13 s | airborne, turning over, limbs trailing (`FLIGHT`) |
+| +0.21 s | first landing, hips to 27 units, **three dust puffs** (`SLAM`) |
+| +0.27 s | it bounces 15 units back up (`BOUNCE`) |
+| +0.33 s | second landing, two more puffs |
+| +0.40 → 0.52 s | the skid runs out, it settles flat (`SPRAWL`) |
+| then | roll, hands and knees, **the arms give out once**, push up, sway onto the feet, spent |
+
+Two details make it read as weight rather than as a pose change. The contact
+shadow is derived from the feet, so an airborne pose floats its shadow for free.
+And getting up is not a single interpolation: `ROLL → ALL_FOURS → GIVE →
+ALL_FOURS → PUSHUP → STAGGER → SPENT` is seven keys over ~1.1 s, with the chest
+dropping back to the floor on the `GIVE` beat, which is what a hurt body does.
+
+**Where it lands is solved, not keyed.** The throw is a distance, but the spacing
+solvers move the contact position, so the flight keys are placed *after* them
+(`reanchor`): the body lands `throw` pixels from where the blow actually landed,
+and the get-up walks back from there to wherever the next key of the choreography
+is — with a small sway so the rise does not read as a slide. While a fighter is
+down, the gap solvers only push the one still standing, so a thrown body never
+gets nudged sideways while it is lying still (that was the first version, and it
+looked like the floor was a conveyor belt).
+
+Only the body's *times* are authored. Everything about the horizontal path is a
+consequence of the blow, which is why four knockdowns and the finisher all have
+the same weight and only their power differs (34 / 32 / 30 / 36 px, and 55 px for
+the knockout).
+
 ### A second set: the desert
 
 The same fight re-staged on a new plate (`--set desert`), with its own title
@@ -418,7 +454,9 @@ so the setting stays put. Both are ~2.4–3.2 Mbps at 720p.
 
 30-second tests: the clean 1080p fight, then the Clash on two sets — mountain
 and desert — with the full HUD and soundtrack, both rendered in ~16 s, and the
-figures now carrying a bowed spine, articulated feet and hands, a face and
-speed deformation, and three close-up inserts on the heaviest impacts — one of
-them an X-ray of the skull. Next: the one-minute version with the same pipeline,
-then longer choreography with more camera angles.
+figures carrying a bowed spine, articulated feet and hands, a face and speed
+deformation, three close-up inserts on the heaviest impacts (one of them an
+X-ray of the skull), hitstop and compression on every contact, a coiled wind-up
+before every landed blow, and knockdowns that fly, bounce, skid and climb back
+up. Next: footwork (real steps instead of pivots), then the one-minute version
+with chained choreography, weapons and a 1-vs-many round.
