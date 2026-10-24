@@ -172,28 +172,90 @@ def slash_arc(cv, samples, length: float, power: float = 1.0,
     cv.polyline(outer, max(1.5, 2.4 * u), (255, 255, 255), alpha=a(215 * fade))
 
 
+def blade_smear(cv, samples, power: float = 1.0,
+                colour=(255, 255, 255)) -> None:
+    """The band the *whole blade* swept: a 4-frame buffer of (hilt, tip).
+
+    A trail sampled at the point alone is a wire. The smear is the polygon
+    between where the guard was and where the point was, frame by frame, so the
+    shape has the width of the sword at one end and the speed of the swing at
+    the other — which is what an animator draws when they draw a slash.
+    """
+    if power <= 0.05 or len(samples) < 2:
+        return
+    # A blade that turns more than ~50 degrees inside the buffer would fill the
+    # frame with a white sheet; the part of the swing that happened between two
+    # exposures is not *visible* air, it is speed. Keep the most recent samples
+    # inside that cone and let the rest of the motion read as a hard edge.
+    span = 0.90
+    end = math.atan2(samples[-1][1][1] - samples[-1][0][1],
+                     samples[-1][1][0] - samples[-1][0][0])
+    keep = [samples[-1]]
+    for h, tp in reversed(samples[:-1]):
+        a = math.atan2(tp[1] - h[1], tp[0] - h[0])
+        d = (end - a + math.pi) % math.tau - math.pi
+        if abs(d) > span:
+            break
+        keep.append((h, tp))
+    samples = list(reversed(keep))
+    if len(samples) < 2:
+        return
+    # and a blade that only *translates* leaves no crescent: a sword carried
+    # forward is not a slash, and filling the band between two parallel paths
+    # is what turned a lunge into a sheet of white paper
+    angs = [math.atan2(tp[1] - h[1], tp[0] - h[0]) for h, tp in samples]
+    if max(angs) - min(angs) < 0.12:
+        return
+    # ... and the *guard* has to stay where it was, or the band between two
+    # blade positions is a parallelogram across the frame instead of a crescent
+    axe = abs(samples[-1][0][0] - samples[0][0][0])
+    aye = abs(samples[-1][0][1] - samples[0][0][1])
+    blade_len = math.hypot(samples[-1][1][0] - samples[-1][0][0],
+                           samples[-1][1][1] - samples[-1][0][1]) or 1.0
+    if math.hypot(axe, aye) > 0.45 * blade_len:
+        return
+    tips = [cv.wp(t) for _h, t in samples]
+    hilts = [cv.wp(h) for h, _t in samples]
+    band = tips + list(reversed(hilts))
+    cv.polygon(band, colour, alpha=int(112 * power))       # air, not paint
+    # the leading edge is where the steel is: a brighter line along the last
+    # two tip samples and back down to the guard it is attached to
+    cv.polyline(tips + [hilts[-1]], max(1.4, 2.2 * cv.unit()),
+                (255, 255, 255), alpha=int(240 * power))
+
+
 def slash_trail(cv, tips, power: float = 1.0, width: float = 13.0) -> None:
     """The streak the point of a blade leaves in the air.
 
     A ribbon between two tip *paths* turns into a kite as soon as the fighter
     also steps, so the trail is a tapered brush along the single path the tip
     actually travelled: thick and bright at the blade, a whisker at the tail,
-    always ending exactly where the point of the sword is now.
+    always ending exactly where the point of the sword is now. It is drawn as
+    one polygon with square ends — strokes with round caps at this width read as
+    a string of beads hanging in the sky.
     """
     if power <= 0.15 or len(tips) < 3:
         return
     u = cv.unit()
     pts = [cv.wp(p) for p in tips]
     n = len(pts) - 1
-    for i in range(n):
-        f = (i + 1) / n                      # 0 at the tail, 1 at the blade
-        w = max(0.8, width * u * f * f)
-        a = int(96 * power * (0.18 + 0.82 * f))
-        if a <= 2:
-            continue
-        cv.line(pts[i], pts[i + 1], w, (255, 255, 255), alpha=a)
-        cv.line(pts[i], pts[i + 1], max(0.7, w * 0.40),
-                (255, 255, 255), alpha=min(220, int(a * 1.35)))
+    left, right = [], []
+    for i, p in enumerate(pts):
+        f = i / n                              # 0 at the tail, 1 at the blade
+        w = max(0.35, width * u * 0.5 * f * f)
+        q = pts[min(n, i + 1)]
+        r = pts[max(0, i - 1)]
+        dx, dy = q[0] - r[0], q[1] - r[1]
+        d = math.hypot(dx, dy) or 1.0
+        nx, ny = -dy / d * w, dx / d * w
+        left.append((p[0] + nx, p[1] + ny))
+        right.append((p[0] - nx, p[1] - ny))
+    a = int(150 * power)
+    if a <= 3:
+        return
+    cv.polygon(left + list(reversed(right)), (255, 255, 255), alpha=a)
+    cv.polyline(left[max(0, n - 2):], max(1.0, 1.8 * u), (255, 255, 255),
+                alpha=min(235, int(a * 1.4)))
 
 
 def sparks(cv, cx: float, cy: float, age: float, size: float = 1.0,

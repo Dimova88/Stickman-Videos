@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import math
 
-from .core import SEG, Pose, solve
+from .core import SEG, Pose, solve, _bent
 
 D2R = math.pi / 180.0
 ARM_K = 1.24          # limb proportions of the reference stickman
@@ -130,16 +130,23 @@ def _hip_height(foot_l, foot_r) -> float:
 
 
 def _arm_angles(up: float, fore: float, facing: int):
-    """Clamp a hand to the arm's reach so an arm can never over-extend."""
+    """Clamp a hand to the arm's reach so an arm can never over-extend.
+
+    Aiming the forearm at a nearer point is not enough: on a *straight* arm the
+    forearm direction is the same as the upper arm's, so the wrist stays at
+    ``UPPER + FORE`` however far the target was pulled in — which is exactly how
+    a fully extended arm was passing the "never longer than its bones" audit at
+    ratio 1.0000. When the clamp fires the pair is re-solved as a real two-bone
+    chain, so the reach is the clamped distance and the elbow has an angle.
+    """
     u, f = float(up) * D2R, float(fore) * D2R
     elbow = (math.cos(u) * UPPER_LEN, math.sin(u) * UPPER_LEN)
     hand = (elbow[0] + math.cos(f) * FORE_LEN, elbow[1] + math.sin(f) * FORE_LEN)
     d = math.hypot(*hand)
     if d > ARM * ARM_REACH:
-        k = ARM * ARM_REACH / d
+        k = ARM * ARM_REACH / max(d, 1e-6)
         hand = (hand[0] * k, hand[1] * k)
-        # re-fold the forearm to land on the clamped hand
-        f = math.atan2(hand[1] - elbow[1], hand[0] - elbow[0])
+        u, f = _bent((0.0, 0.0), hand, UPPER_LEN, FORE_LEN, "elbow", facing)
     return u, f
 
 
@@ -308,13 +315,26 @@ AERIAL_KICK = P(torso=-92, foot_l=(112, 72), foot_r=(-20, 44),
 FALL = P(torso=-52, hip=96, foot_l=(-26, 0), foot_r=(-58, 0),
          a_up=26, a_fore=-62, b_up=38, b_fore=-50, head=-12)
 
-#: on the floor and staying there. The pelvis is 11 rig units up — the
-#: thickness of a lying body — and every limb is inside its own reach, so the
-#: pose cannot splay however long it is held. This is the pose a beaten fighter
-#: is *left* in, so it has to survive being on screen for six seconds.
-DOWN = P(torso=2, hip=11, foot_l=(-104, 2), foot_r=(-62, 6),
-         a_up=26, a_fore=-38, b_up=8, b_fore=-58, head=-6,
-         spine=3.0, toe_l=8.0, toe_r=4.0, grip_a=0.15, grip_b=0.15)
+#: On the floor and staying there. The rigid down state, to the numbers the
+#: engine contract asks for: the pelvis a body-thickness above the ground, the
+#: shoulders 75 units *behind* it, both feet 80 units in front, and every joint
+#: inside its own reach — so the pose cannot splay however long it is held, and
+#: two bodies lying next to each other can be spaced from their hip, not their
+#: silhouette.
+DOWN_HIP = 12.0 / 1.30          # 12 px of ground clearance, in rig units
+# The engine contract says "feet 80 px in front of the pelvis", which assumes a
+# ~80 px leg. This rig's leg is 142 px (66 + 63, times LEG_K), so a foot only 80
+# out leaves the knee no choice but to fold into a 60 px tent. The pose is the
+# same idea — pelvis down, legs laid out in front, straight — at this rig's
+# proportions: 100 rig units is 96 % of the leg, so the knee has a bend and no
+# more, which is what a body on the floor actually looks like.
+DOWN_FEET = 108.0
+DOWN_SHOULDER = 75.0 / 1.30     # ... and the neck this far behind it
+
+DOWN = P(torso=-176, hip=DOWN_HIP,
+         foot_l=(DOWN_FEET, 2.0), foot_r=(DOWN_FEET - 10.0, 7.0),
+         a_up=6, a_fore=-4, b_up=20, b_fore=30, head=-4,
+         spine=2.0, toe_l=6.0, toe_r=14.0, grip_a=0.12, grip_b=0.12)
 
 # pushing back up off the floor
 RECOVER = P(torso=-62, hip=74, foot_l=(-20, 0), foot_r=(-66, 0),
@@ -342,14 +362,13 @@ BOUNCE = P(torso=-20, hip=36, foot_l=(-74, 12), foot_r=(-98, 20),
            a_up=-6, a_fore=6, b_up=16, b_fore=34, head=-24, air=15,
            spine=2.0, toe_l=14.0, toe_r=12.0, grip_a=0.2, grip_b=0.2)
 
-#: the body at rest on the floor: pelvis 10 rig units off the ground (that is
-#: the thickness of a lying torso), the spine flat, one knee up, hands open and
-#: slack. Every joint is inside its own reach, so nothing can splay: at this
-#: height the leg IK has 30 % of slack and the knee bend is fixed by the target,
-#: not by the solver's last resort.
-SPRAWL = P(torso=3, hip=11, foot_l=(-96, 1), foot_r=(-56, 7),
-           a_up=14, a_fore=-52, b_up=34, b_fore=26, head=-7, air=0,
-           spine=2.0, toe_l=6.0, toe_r=16.0, grip_a=0.2, grip_b=0.25)
+#: The sprawl of a body that has just stopped sliding: same rigid state, one
+#: knee up and one arm across the ground, so two men on the floor are not the
+#: same shape twice.
+SPRAWL = P(torso=-174, hip=DOWN_HIP,
+           foot_l=(DOWN_FEET - 8.0, 6.0), foot_r=(DOWN_FEET - 44.0, 12.0),
+           a_up=16, a_fore=-40, b_up=34, b_fore=24, head=-6,
+           spine=3.0, toe_l=8.0, toe_r=18.0, grip_a=0.18, grip_b=0.2)
 
 # the body comes back to itself: a roll onto the hip, then hands and knees
 ROLL = P(torso=-38, hip=46, foot_l=(-38, 8), foot_r=(-70, 22),

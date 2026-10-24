@@ -54,6 +54,9 @@ python3 -m venv .venv
 # re-export the art as standalone transparent PNGs (assets/steel, assets/ink)
 .venv/bin/python tools/make_assets.py
 
+# audit the rig: limb stretch, bodies on the floor, depth-of-field jumps
+.venv/bin/python tools/audit_rig.py --set steel-mountain
+
 # look at the soundtrack: levels per section, spectra, spectrogram
 .venv/bin/python tools/audio_report.py --set steel-mountain
 
@@ -89,6 +92,7 @@ python3 -m venv .venv
 | `tools/make_assets.py` | exports the sword, the crescent, the sparks and the ink as PNGs |
 | `fight/clashfilm.py` | the Mountains Clash renderer: landscape crop, trails, impacts, dust, HUD, procedural audio, FFmpeg pipe |
 | `tools/pose_sheet.py` | renders the whole pose library to one contact sheet — the tool used to check anatomy |
+| `tools/audit_rig.py` | measures the invariants in `AGENT_INSTRUCTIONS.md` on the drawn skeleton: limb length, bodies on the floor, depth-of-field jumps. Exits non-zero so it can gate a render |
 | `assets/mountain_background.png` | 1376×768 painted mountain arena (generated for this project, no third-party art) |
 
 ### The choreography, beat by beat
@@ -759,6 +763,15 @@ trail sampled from the point's own path, sparks that bounce, blade locks, a
 1-vs-3 film on both sets (`steel_clash_720p.mp4`, `steel_desert_720p.mp4`,
 17 shots), a real directional shutter for the whip pans, and the four art pieces
 exported to `assets/` so they outlive this film.
+
+The rig audit is in: `tools/audit_rig.py` walks every frame of a film and
+measures the invariants instead of trusting them — the longest leg and arm as a
+fraction of their own bones, how fast a body on the floor is still sliding, and
+whether the depth of field ever jumps inside a shot. It found a real one: a
+straight arm was passing at **ratio 1.0000**, because the reach clamp re-aimed
+the forearm at a nearer point, which on a straight arm does nothing. The clamp
+now re-solves the pair as a two-bone chain, so a fully extended arm is 0.96 of
+its bones and always has an elbow.
 
 The visual overhaul round is in as well. Heads are silhouettes — no nose, eye,
 brow or mouth on any frame — with a pair of angular slits that light up only when

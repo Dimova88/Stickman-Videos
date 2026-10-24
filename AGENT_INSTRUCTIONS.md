@@ -1,184 +1,107 @@
-# AGENT_INSTRUCTIONS — how a fight gets made in this repo
+# AGENT_INSTRUCTIONS.md — High-Octane Procedural Stickman Animation Engine
 
-Read this before touching a single frame. It is the contract between the
-creative director (the human) and whoever is animating — a person or an agent.
-Everything below was written after a film shipped with melted legs, faces drawn
-out of polygons and a comic star where a hit should have been.
-
-The repo is Python. Any instruction that arrives as TypeScript, C# or a
-YouTube tutorial is a description of an *effect*, never of a file to create.
-Translate the constraint, not the code.
+You are an expert Technical Animator and Procedural Action Director inspired by **Combat Gods (Jhanzou)**, **Alan Becker**, and **One Finger Death Punch**. Your job is to translate any user fight concept into a fluid, hard-hitting, mathematically sound 2D/2.5D stickman animation video.
 
 ---
 
-## 0. The clarification protocol
+## PHASE 1: USER IDEA CLARIFICATION PROTOCOL (interactive mode)
 
-Ask before animating, not after rendering.
+Before writing or modifying animation code for a new user prompt, evaluate if the user's request is underspecified. If critical choreography details are missing, **ask the user 3 to 5 concise, high-impact questions** before generating the scene:
+1. **Combatants & Asymmetry:** How many fighters are on each side (e.g., 1v1 duel, 1v3 gauntlet, 1v10 horde), and what are their signature colors/archetypes?
+2. **Weapons & Powers:** Are they fighting with bare-handed martial arts (taijutsu), blades (katanas, daggers, spears), or elemental/energy powers (lightning dashes, shockwaves)?
+3. **Dramatic Arc & Climax:** Should the protagonist dominate effortlessly, or suffer a near-defeat before awakening/counter-attacking for the final blow?
+4. **Environment & Mood:** What is the setting, lighting palette, and pacing (e.g., fast-paced relentless blitz vs. tense samurai standoffs with sudden lethal strikes)?
 
-1. **Restate the shot in one sentence** ("a wide two-shot: hero parries, rival
-   is thrown left"). If you cannot, you do not understand the shot yet.
-2. **Name every moving body and where it starts and ends.** Positions that are
-   not chosen are positions that will collide.
-3. **Name the camera**: angle, height, whether it cuts inside the beat.
-4. **Name the sound event** for every impact before it is animated. An impact
-   with no sound is a bug.
-5. **Only then** write keys. If a request is ambiguous about any of the four,
-   ask one question and wait — a wrong 90-frame render costs more than a
-   message.
-
-Never invent story. The director owns the idea, the script and the cut; the
-animator owns the physical truth of the frame.
+*(Note: If the user explicitly says "surprise me", "don't ask questions", or runs in non-interactive batch mode, skip Phase 1 and autonomously select the most cinematic options.)*
 
 ---
 
-## 1. Prohibitions
+## PHASE 2: STRICT VISUAL & ANATOMICAL PROHIBITIONS (NEVER DO THIS)
 
-These are hard. A frame that breaks one is not "a style choice".
+To prevent "programmer art" and physics glitches, you must NEVER violate these rules:
 
-| Never | Because |
+1. **NO FACIAL FEATURES OR HUMAN CLOSE-UPS:**
+   - NEVER draw noses, mouths, lips, or eyebrows on stickman heads.
+   - NEVER generate close-up cut-ins of drawn human/anime faces using SVG/Canvas shapes.
+   - Heads must be clean, solid-colored circles. You may ONLY render glowing slit/angular eyes (`polygon` with neon bloom) during high-energy states or lethal attacks.
+2. **NO RUBBER/SPAGHETTI LIMBS (HARD BONE CONSTRAINTS):**
+   - Every arm and leg MUST pass through the clamped 2-bone Inverse Kinematics solver (`solveTwoBoneIK`).
+   - The distance between `hip` and `foot` MUST NEVER exceed `thighLength + calfLength`.
+   - The distance between `shoulder` and `hand` MUST NEVER exceed `upperArmLength + forearmLength`.
+3. **NO SINE-WAVE ARM WAVING OR STACKED IDLE ENEMIES:**
+   - NEVER animate attacks by oscillating limb angles with `Math.sin(frame)` while characters stand still.
+   - NEVER stack multiple enemies on the same X-coordinate waving their arms in the air.
+   - NEVER allow a character in the `DOWN`, `RAGDOLL`, or `DEAD` state to swing weapons or stay anchored to their initial foot coordinates.
+4. **NO COMIC-BOOK STARS OR ABRUPT BLUR TOGGLING:**
+   - NEVER use multi-pointed comic-book stars (`*`) for hit effects.
+   - NEVER toggle background `filter: blur()` on and off abruptly between frames.
+
+---
+
+## PHASE 3: MANDATORY ANIMATION & PHYSICS ARCHITECTURE
+
+Every video you generate must implement these 6 core pillars:
+
+### 1. Root Motion & Procedural Footwork
+- Characters do not fight standing in place. Every attack requires **Root Motion** (the pelvis/hip translates rapidly across the X/Y axis: lunges, dashes, jump-slashes, evasions, and knockback slides).
+- Feet must dynamically step whenever `Math.abs(foot.x - idealStanceX) > strideThreshold` using a parabolic lift curve (`y = groundY - Math.sin(t * Math.PI) * stepHeight`).
+- When a fighter is knocked down (`state === 'DOWN'` or `'DEAD'`), **both the hip and both feet** must drop to `groundY` and slide backward together with friction (`vx *= 0.85`).
+
+### 2. Four-Phase Attack Timing (The Sakuga Curve)
+Every offensive move in the choreography timeline must be structured into 4 distinct phases:
+- **Phase A — Windup (6–10 frames, `easeOutCubic`):** Coil the body. Bend knees (`hip.y += 12`), arch the quadratic Bezier spine backward, and pull the weapon or fist behind the torso.
+- **Phase B — Active Strike (2–4 frames, `easeInExpo`):** Explosive forward translation (`hip.x += dir * lungeDistance`) + full limb/weapon extension. Movement must cross 80% of the distance in 2 frames.
+- **Phase C — Hitstop (3–4 frames, frozen):** On the exact frame of contact, freeze both the attacker and defender pose completely (`hitstop > 0`). Compress the defender's spine C-curve away from the blow and trigger camera shake.
+- **Phase D — Follow-Through & Knockback (8–16 frames, `easeOutQuart`):** Defender is launched backward (`vx`, `vy`), skidding across the ground raising dust particles or bouncing off the floor, while the attacker smoothly recovers to guard stance.
+
+### 3. Weapon Trails & Smear Frames
+- Whenever a weapon (katana, spear, staff) or limb moves during **Phase B (Active Strike)**, render a **Crescent Motion Smear**:
+  - Track the last 4 frames of `(basePos, tipPos)`.
+  - Draw a tapered polygon/path connecting the historical positions with a high-contrast glow (`#FFFFFF` core fading to character accent color, `mix-blend-mode: screen`).
+
+### 4. High-Contrast Impact Frames (Replacing Face Cut-Ins)
+- For climax hits, parries, or finishing blows (`isCriticalHit = true`), trigger a **2-Frame Monochrome Sakuga Impact Flash**:
+  - Frame 1: Pure black background (`#000`), pure white character silhouettes (`#FFF`), and sharp white radial speed-spikes radiating from `(hitX, hitY)`.
+  - Frame 2: Inverted—pure white background (`#FFF`), pure black character silhouettes (`#000`), and black radial speed-spikes.
+
+### 5. Multi-Enemy Spacing & Turn-Taking (1vN Choreography)
+- When choreographing 1 vs. Many:
+  - Only **one** opponent engages the protagonist within striking range (`90px–150px`) at a time, OR two opponents attack from opposite sides (`left` and `right`) for a surround-counter sequence.
+  - Waiting opponents hold a defensive martial guard stance at `250px–400px` distance with subtle weight-shifting until the active opponent is knocked away or defeated, then dash in aggressively.
+
+### 6. Dynamic Camera & Layered Audio
+- **Camera:** Smoothly track the midpoint of active combatants using damped spring interpolation (`lerpFactor = 0.12`). Zoom in (`scale = 1.25–1.45`) during rapid exchanges and critical hits; zoom out (`scale = 1.0`) during long dashes or multi-enemy knockbacks. Apply directional decayed screen shake (`shakeX`, `shakeY`) only on `Hitstop` frames.
+- **Audio Sync:** Every `Phase B` triggers a pitched whoosh SFX; every `Phase C (Hitstop)` triggers a layered impact SFX (metallic clang for parries, deep bass punch/slash for hits); `Critical Hits` trigger a sub-bass drop.
+
+---
+
+## PHASE 4: PRE-RENDER SELF-AUDIT CHECKLIST
+
+Before finalizing any video generation, verify the following invariants in your code:
+- [ ] Are all limb lengths mathematically clamped via `solveTwoBoneIK` so no leg or arm ever stretches beyond `L1 + L2`?
+- [ ] Do downed/dead characters update BOTH their `hip` and `foot` coordinates so they lie flat on `groundY` without stretching back to their spawn point?
+- [ ] Are there zero noses, mouths, eyebrows, or geometric human face close-ups in the render code?
+- [ ] Does every attack have distinct `windup`, `active` (with weapon/limb smear trail), `hitstop` (freeze frames), and `recovery` phases?
+- [ ] Is background blur continuous and subtle rather than snapping on and off?
+
+---
+
+## REPOSITORY ADDENDUM — where these rules live in this code
+
+This repository is **Python** (`PIL`, `numpy`), not TypeScript. The pillars above
+are the contract; the names below are this codebase's translation of them. Any
+instruction that arrives as JS/TS describes an *effect* — translate the
+constraint, never the file.
+
+| Pillar | Where it is implemented |
 | --- | --- |
-| Noses, mouths, lips, eyebrows, eyes drawn as shapes on a stickman head | at 40 px across they read as programmer art. Heads are silhouettes; the only feature allowed is a pair of glowing angular slits in a high-energy state. |
-| A drawn human close-up built from primitives | same reason, ten times over. The dramatic accent is the two-frame ink hit. |
-| Comic multi-point stars, white blobs with dots around them | a star has a fixed symmetric outline: it reads as a sticker. Use a hot bloom, irregular needles and falling debris. |
-| Sine-wave limb oscillation, "waving" a sword | a limb travels along a path with anticipation and follow-through. If it looks like `sin(t)`, it is wrong. |
-| Stacked idle enemies on one X | two bodies on the same spot destroy depth and read as one broken body. |
-| Any attack, guard or "recover" key while a fighter is `DOWN` / `RAGDOLL` / `DEAD` | a body on the floor does not swing. Attacks are gated by state, not by willpower. |
-| Feet pinned while the hips travel | that is what "spaghetti legs" means: the FK chain overshoots and the ankle floats. |
-| Snapping `blur()` on and off | depth of field is continuous. Mix the blurred plate by depth, never toggle it. |
-| Silhouette-only shots, OTS (over-the-shoulder) framings, an audience of dark shapes | both fighters are always drawn. The exception is the two-frame ink hit, which is a drawing of one blow, not a shot style. |
-| Voice, narration, or any recognisable third-party audio | the film is original, or it cannot be monetised. Effort sounds stay non-verbal. |
+| Clamped 2-bone IK | `fight/core.py` — `_two_bone_both()` clamps the target distance to `[|L1−L2|, L1+L2−0.01]`; `_two_bone(..., bend)`, `_bent(...)` and `poses._leg_ik()` / `_arm_angles()` are the same solver used by the rig |
+| Root motion, stepping | `fight/footwork.py` (planted feet, stride, parabolic lift). Feet are authored as world targets in `P()` and solved, never drawn as raw angles |
+| `DOWN` / `DEAD` rigid state | `fight/poses.py` — `DOWN`, `SPRAWL`; `to_pose()` pins the pelvis and lays the feet out; horizontal motion decays through `ragdoll.reanchor()` |
+| Four-phase beats | keys + easings in `fight/steel.py` / `fight/clash.py`; hitstop and compression envelopes in `fight/impact.py`; the knockdown arc in `fight/ragdoll.py` |
+| Smear arcs | `fight/steelblade.py` — `slash_arc()` (4-sample ribbon between the tip path and a circle inside it) and `slash_trail()` |
+| 2-frame impact frames | `fight/vfx.py` — `impact_frame_index()` decides, `impact_frame()` draws the inverted silhouettes plus 24 radial spikes |
+| Camera, depth of field | `fight/camera.py` (shots, `dof`, `roll`), `draw_background()` in `fight/clashfilm.py` (blur mixed by depth, never toggled) |
+| Score and foley | `fight/sound.py` (`score()` derives every cue from the scene's own impact list) |
 
----
-
-## 2. The six pillars
-
-### 2.1 Root motion
-
-The hips are the body. Everything else follows.
-
-* A foot is a **world-space target**, never an angle. The leg is solved to it.
-* Reach is clamped: `maxReach = (l1 + l2) * 0.99`. A solved leg is never
-  straighter than 99 % of its bones, so the knee always has one visible bend.
-* A planted foot must not slide. If the hips move further than `maxStride`, the
-  foot takes a step: a 6-frame interpolation with a parabolic lift.
-* Rigid down state: once a body is on the floor, the pelvis is pinned at ground
-  level, the shoulders are fixed relative to it, the feet are laid out in front,
-  horizontal velocity decays (`vx *= 0.85`), and **no attack key may be authored
-  until the body is up**.
-
-### 2.2 Four-phase timing
-
-Every action is four beats, not one:
-
-1. **anticipation** — the pose loads, the weight shifts, the camera holds;
-2. **strike** — 1–3 frames, the only time the limb is at full extension;
-3. **impact** — hitstop. The world freezes for 2–4 frames, the blow rings out;
-4. **recovery** — the body pays for it: overshoot, settle, back to guard.
-
-A contact with no anticipation reads as a teleport. A contact with no recovery
-reads as a loop. Both are worse than a missed hit.
-
-### 2.3 Weapon smears
-
-A katana at 24 fps is a hairline. It needs three things in the same frame:
-
-* a **trail** built from a 4-frame buffer of `{hilt, tip}` samples — never from
-  the current frame alone, which is a single line;
-* a **bright edge** on the leading side only, so the smear has a direction;
-* **continuity**: the trail must touch the blade's guard. A crescent floating
-  two centimetres from the sword is exactly the "floating lines" bug.
-
-Blades are tapered and pointed. A blade with a square end is a plank.
-
-### 2.4 Impact frames
-
-On the heaviest hits — the clash, the finisher, a killing blow — the film stops
-being a photograph of a fight and becomes a drawing of one blow:
-
-* **frame 1**: white silhouettes on black, radial needles from the contact;
-* **frame 2**: the same drawing inverted, black on white;
-* both frames come from the **real bodies**, drawn through the real camera with
-  the colours swapped. Nothing is re-posed, so nothing can drift out of step.
-
-Two frames. Rare. Never a resting composition.
-
-### 2.5 1-vs-many spacing
-
-One fighter engages; the others **wait, and are visibly somewhere else**.
-
-* the engaged rival stands 100–160 units from the hero;
-* every other rival is at least 260 units away, in its own lane, and is allowed
-  to fall out of frame while the hero fights;
-* a rival that is down stays down in its own lane until it is its turn;
-* switching who is engaged is a *beat* (a step in, a step out), never a
-  teleport.
-
-### 2.6 Camera and audio sync
-
-* A shot's zoom, height and depth of field change **continuously** inside the
-  shot; a cut is the only place a hard change is allowed.
-* Every camera move has a reason: the push follows the blow, the pull follows
-  the body away, the whip follows the blade.
-* Audio is derived from the same event list the picture uses — impacts, foot
-  plants, the ink frames. If the picture and the score read two different
-  timelines, one of them is wrong.
-* Music reacts: it stops dead for a blade lock, drops out before the last blow,
-  and peaks on it. A loop is a defect.
-
----
-
-## 3. Pre-render checklist
-
-Run through this before a 720-frame render, and again before calling the render
-done.
-
-- [ ] **Restore point** committed and tagged (`restore/<name>`) before the batch.
-- [ ] **Every fighter faces its opponent** for the whole shot.
-- [ ] **No two bodies closer than the spacing rule** at any frame — measure, do
-      not eyeball.
-- [ ] **No attack keys while down.** Grep the track for keys between the
-      knockdown and the get-up.
-- [ ] **Legs**: no frame where the ankle is further from the hip than the leg is
-      long; no frame where a foot slides while planted.
-- [ ] **Heads**: no feature but the slits. The ink frame inverts them too.
-- [ ] **Blades**: no frame where the whole sword is a 1 px line; the smear
-      touches the guard.
-- [ ] **Depth of field** has no discontinuity inside a shot.
-- [ ] **Impact frames** are two frames, and the frames either side are normal.
-- [ ] **Audio**: no loop, no repeated impact sample, music drops out where the
-      picture stops.
-- [ ] **Sample the film**: pull frames at every second, view them as a contact
-      sheet, and look for the frame that embarrasses you. There is always one.
-- [ ] **Measure the claim.** "Fixed" is a number (a distance, a delta, a
-      spectrum), not an adjective.
-
----
-
-## 4. Where things live
-
-| Path | What |
-| --- | --- |
-| `fight/core.py` | the rig: ten segments, FK solve, two-bone IK, the pose vector |
-| `fight/poses.py` | the pose library — the floor poses are authored here, not ad hoc |
-| `fight/ragdoll.py` | knockdown flight, bounce, skid and the get-up |
-| `fight/clashfilm.py` | the renderer: camera, bodies, trails, impacts, HUD, ink frames |
-| `fight/clash.py`, `fight/steel.py` | the choreography: keys, impacts, shots, score map |
-| `fight/vfx.py` | contact shadows, dust, craters, bloom, the ink frame |
-| `fight/sound.py` | foley, taiko score, mix. No samples, everything synthesised |
-| `tools/render_clash.py` | the harness (`--set`, `--storyboard`, `--start/--end`) |
-| `tools/audio_report.py` | loudness / spectrum report for a score |
-
-Render with:
-
-```bash
-.venv/bin/python tools/render_clash.py --w 1280 --set steel-mountain \
-    --out renders/steel_clash_720p.mp4
-```
-
-Probe a single frame without rendering the film:
-
-```python
-import fight.clashfilm as F
-sc = F.scene("steel-mountain")
-F.render_frame(16.90, sc).save("/tmp/frame.png")
-```
+The harness, the render commands and the probe snippets are in `README.md`.

@@ -182,14 +182,22 @@ def _high_plate(set_name: str) -> Image.Image:
     return src
 
 
+#: The plate is painted 25 % larger than the frame. At zoom 1.0 the crop was
+#: exactly the size of the plate, so the camera had *no* room to pan before the
+#: clamp stopped it dead; the overscan buys that room back and hides the plate
+#: edge under a whip pan or a Dutch tilt for ever.
+BG_OVERSCAN = 1.25
+
+
 def background(cx: float, cy: float, zoom: float, w: int, h: int, path: str):
     """The plate as the camera sees it: a crop around (cx, cy) at ``zoom``.
 
     Design space maps onto the plate 1:1 at zoom 1, so a crop is a straight
-    scale of the design coordinates.
+    scale of the design coordinates — divided by ``BG_OVERSCAN`` so the plate
+    is a little larger than the frame and the pan never runs out of picture.
     """
     src = _plate(path)
-    k = (src.width / DESIGN_W) / max(zoom, 1.0)
+    k = (src.width / DESIGN_W) / max(zoom, 1.0) / BG_OVERSCAN
     rw, rh = w * k, h * k
     u = cx * src.width / DESIGN_W
     v = cy * src.height / DESIGN_H
@@ -690,7 +698,17 @@ def draw_fighter(cv: Canvas, track, t: float) -> None:
             # on the floor line: a foot of a fixed height, on the ground, always
             sole = g - 3.0
             drop = FOOT_T * 0.62
-            ank = (ank[0] + pose.facing * 1.6, sole - drop)
+            # Put the sole on the floor line *without changing the length of the
+            # shin*: slide the ankle down its own bone towards the floor instead
+            # of teleporting it to a fixed height. The old version moved the
+            # ankle to `sole - drop` wherever that was, so a crouching fighter's
+            # shin was drawn longer than the shin is — the "rubber leg".
+            knee = pts[-2]
+            shin = math.hypot(ank[0] - knee[0], ank[1] - knee[1]) or 1.0
+            want = (ank[0] + pose.facing * 1.6, sole - drop)
+            vy, vx = want[1] - knee[1], want[0] - knee[0]
+            d = math.hypot(vx, vy) or 1.0
+            ank = (knee[0] + vx / d * shin, knee[1] + vy / d * shin)
             pts = pts[:-1] + [ank]
             tilt = 0.0
         else:
@@ -1085,6 +1103,16 @@ def draw_weapon(cv: Canvas, track, t: float, sk) -> None:
     path = sum(math.hypot(tips[i + 1][0] - tips[i][0], tips[i + 1][1] - tips[i][1])
                for i in range(len(tips) - 1))
     power = min(1.0, max(0.0, (path - 26.0) / 150.0))
+    # the smear: the four-frame buffer of the *whole* blade, hilt to point, not
+    # just the point's path (a wire) — this is the crescent the swing is in
+    smear = []
+    for k in (3, 2, 1, 0):
+        tk = max(0.0, t - 0.024 * k)
+        sx = track.skel(tk)
+        a = sx.tip_angle(sid)
+        smear.append((sx.pts[sid],
+                      steelblade.tip_of(sx.pts[sid], a, length)))
+    steelblade.blade_smear(cv, smear, min(1.0, power * 1.25))
     steelblade.slash_trail(cv, tips, power)
     steelblade.draw_blade(cv, sk.pts[sid], ang, length,
                           glow=min(1.0, power * 1.4))
