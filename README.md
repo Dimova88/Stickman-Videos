@@ -461,15 +461,18 @@ zoom. 25 shots in 30 s, 4.5 s of them close-ups.
 
 **Three angles that needed more than camera numbers:**
 
-* **From above (`high`, 5.1–6.3 s and 21.4–22.0 s).** A second top-down rock
-  plate (generated, `assets/ground_*.png`) replaces the landscape, and `Cam`
-  gained a vertical-only squash: a body seen from above is *shorter*, not
-  smaller, so `sqy = 0.70` compresses the vertical scale alone while the camera
-  zooms normally. The plate is cover-cropped like the landscape (a square source
-  used to letterbox the frame) and pulled down ~20 % in level so the fighters
-  stay the brightest thing in shot; the contact shadow shrinks to a pool at the
-  feet and darkens, because from above the shadow is what separates a body from
-  the rock.
+* **Raised camera (`high`, 5.1–6.3 s and 21.4–22.0 s).** The first try was a
+  straight-down view: a top-down rock plate, bodies squashed to 70 % vertically.
+  It does not work, and it cannot — the fight is staged in a plane parallel to
+  the lens, so from directly above both fighters would collapse into a *line*,
+  and a side-on body standing on a top-down floor reads as a sticker on a
+  texture. What a raised camera really does is show the ground receding, so the
+  floor plate is now mapped through an inverse-perspective row map (rows near
+  the horizon compressed and widened, rows at the feet stretched and narrowed)
+  and composited under the painted peaks at a 46 % horizon. The squash drops to
+  0.90, which is what 25° above the eyeline actually does to a figure, and the
+  frame is aimed below the heads so the arena fills the bottom of the shot.
+
 * **Over the shoulder (`ots`, 12.75–13.44, 17.8–18.2, 20.95–21.4 s).** The near
   fighter is *not drawn*: a blurred patch (head, neck, shoulder running out of
   the bottom corner) is composited over the finished frame with a warm rim light,
@@ -500,14 +503,37 @@ rides the animation clock, so it is frozen with the bodies during the hitstop.
 
 * the plate is cropped **behind** the camera (36 % of its travel): the scenery
   lags the fighters;
-* a procedurally drawn near layer (rock and pines on the mountain, dunes and
-  boulders on the desert) sits **in front of everything**, travels at 175 % of
-  the camera, is never fully opaque and is blurred — it is what turns a pan into
-  a move through space;
+* a procedurally drawn near layer sits **in front of everything**, travels at
+  175 % of the camera, is never fully opaque and is blurred — it is what turns a
+  pan into a move through space. It is deliberately built out of a few *large*
+  corners: the first version scattered rocks and pines along the bottom edge and
+  the row of small dark bumps read as an audience sitting in the dark, which is
+  the one thing that must never be in frame;
 * close-ups carry a `dof` value that blurs the plate into bokeh while the
   fighters stay sharp, because the lens is on them. It is done by blurring a
   sixth-size copy and blowing it back up: 2 ms instead of the 24 ms a Gaussian
   on the full frame costs.
+
+### Feet that step (*fight/footwork.py*)
+
+The choreography moves a fighter by interpolating its `x` between keys, so the
+body used to glide: the feet stayed welded to the same spot on the body while
+the ground streamed past. Now the step cycle is derived from the one thing the
+keys already know — how far the fighter has travelled:
+
+* the cycle advances on **distance**, not on time (`stride` = 56 px + 6 % of the
+  speed), so a foot never skates: a sprint simply takes quicker, longer steps;
+* the swinging foot lifts, travels forward and lands, while the planted one
+  slides back through the stance by exactly the distance the body moved;
+* a deceleration past 520 px/s² puts **both** feet down wide and leans the torso
+  back over the heels — the skid — instead of the fighter freezing mid-slide;
+* a kick or a jump owns its feet: an authored lift above 0.3 is never overruled.
+
+`footwork.apply()` edits the pose dict *before* `to_pose`, so the leg IK still
+does the solve it was tuned against. Path length is integrated with |dx| rather
+than a net displacement, so a fighter who steps back and forth keeps stepping.
+The entrance is now a real run-in: both fighters cover ~120 px at ~130 px/s and
+skid to a stop in front of each other at 1.8 s.
 
 Cost: a frame went from 10.4 ms to 32–40 ms depending on the shot, and the 30 s
 master renders in **24.5 s on 2 vCPU** instead of 24.1 s for the lateral-only
@@ -544,9 +570,9 @@ figures carrying a bowed spine, articulated feet and hands, a face and speed
 deformation, three close-up inserts on the heaviest impacts (one of them an
 X-ray of the skull), hitstop and compression on every contact, a coiled wind-up
 before every landed blow, knockdowns that fly, bounce, skid and climb back up,
-no HUD at all, and a 25-shot camera with whip pans, punch-ins, floor-level
+no HUD at all, feet that step and skid, and a 25-shot camera with whip pans, punch-ins, floor-level
 shots, directional shake and a parallax foreground layer — now including the
-three angles that needed new art: from straight above the arena floor, over the
-near fighter's shoulder, and a five-frame dive onto the fist that is about to
-land. Next: feet (running and skidding steps), then the one-minute version with
-chained choreography and weapons.
+three angles that needed new art: a raised camera looking down a receding arena
+floor, over the near fighter's shoulder, and a five-frame dive onto the fist
+that is about to land. Next: chained choreography (blocks into grabs into
+throws), bladed weapons, and the first 1-vs-many exchange.

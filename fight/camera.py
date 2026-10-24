@@ -55,9 +55,10 @@ SHOTS = (
     # first exchange: tight and level, the camera works to keep them both in
     dict(t0=2.40, t1=5.10, anchor="action", zoom=1.14, z1=1.18, follow=1.0,
          dof=0.10, style="cut", ground=0.79),
-    # wide again for the kicks: you need the whole body to read a sweep
-    dict(t0=5.10, t1=6.30, anchor="high", zoom=0.94, z1=1.02, follow=0.6,
-         dof=0.0, style="cut", sqy=0.70),
+    # up on the ledge, looking down at the ground: you need the whole body to
+    # read a sweep, and the height sells the arena more than a close-up does
+    dict(t0=5.10, t1=6.30, anchor="high", zoom=0.98, z1=1.06, follow=0.6,
+         dof=0.0, style="cut", sqy=0.90, ground=0.84),
     dict(t0=6.30, t1=7.55, anchor="action", zoom=1.04, follow=0.7,
          dof=0.0, style="cut", ground=0.80),
     # the uppercut that drops blue
@@ -98,9 +99,9 @@ SHOTS = (
          dof=0.06, style="cut", ground=0.80),
     dict(t0=20.95, t1=21.40, anchor="ots", ots="blue", zoom=1.32, follow=1.0,
          dof=0.32, style="cut", ground=0.78, zoom_hit=0.08),
-    # from above: the arena floor fills the frame and the bodies go short
-    dict(t0=21.40, t1=22.00, anchor="high", zoom=0.98, z1=1.06, follow=0.7,
-         dof=0.0, style="cut", sqy=0.68),
+    # up on the ledge again: the floor recedes to the peaks under the pair
+    dict(t0=21.40, t1=22.00, anchor="high", zoom=1.02, z1=1.10, follow=0.7,
+         dof=0.0, style="cut", sqy=0.90, ground=0.84),
     dict(t0=22.00, t1=23.40, anchor="action", zoom=1.18, z1=1.26, follow=1.0,
          dof=0.12, style="cut", ground=0.78, zoom_hit=0.07),
     dict(t0=23.40, t1=24.40, anchor="action", zoom=1.06, follow=0.9,
@@ -174,7 +175,10 @@ def anchor_point(scene, shot, t: float, zoom: float):
         # as a punch closing in rather than a close-up of a floating hand
         return (fist[0] * 0.35 + far[0] * 0.65, far[1] + 58.0)
     if kind == "high":
-        return ((sa.head[0] + sb.head[0]) * 0.5, GROUND - 44.0)
+        # a raised camera sits above the pair and looks *down* at them, so the
+        # frame is aimed below the heads: the floor fills the bottom and the
+        # peaks stay in shot
+        return ((sa.head[0] + sb.head[0]) * 0.5, GROUND - 62.0)
     if kind == "down":
         name, hip, tr = _downed(scene, t)
         sk = sa if name == "red" else sb

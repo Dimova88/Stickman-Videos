@@ -116,12 +116,16 @@ def _plate(path: str) -> Image.Image:
 
 
 def _high_plate(set_name: str) -> Image.Image:
-    """The plate for a high crane shot: the arena floor under a strip of sky.
+    """The plate for a raised camera: the arena floor in perspective.
 
-    A true top-down would need every limb drawn in a second projection, so the
-    high angles are a crane looking down the mountain instead: the painted
-    landscape stops at a horizon two fifths up and the cracked-rock floor fills
-    the rest, misted together so the seam never reads as a rectangle.
+    A straight-down view cannot work here — the fight is staged in a plane
+    parallel to the lens, so from directly above both fighters would collapse
+    into a line, and drawing a side-view body on a top-down floor plate (the
+    first attempt) reads as a sticker on a texture. What a raised camera really
+    does is show the ground receding to a horizon, so the floor plate is mapped
+    through a perspective mesh: rows near the horizon are compressed and narrow,
+    rows at the feet are stretched wide, and the painted landscape sits above
+    the horizon line.
     """
     key = ("high", set_name)
     if _bg_cache.get("key") == key:
@@ -130,42 +134,47 @@ def _high_plate(set_name: str) -> Image.Image:
     w, h = DESIGN_W * 2, DESIGN_H * 2
     far = _plate(os.path.join(ASSETS, SET_FILES.get(set_name, "mountain_background.png")))
     floor = _plate(os.path.join(ASSETS, GROUND_FILES.get(set_name, "ground_mountain.png")))
-    horizon = int(h * 0.40)
+    horizon = int(h * 0.46)
     out = Image.new("RGB", (w, h))
-    # sky: the top of the landscape, squashed a little (we are looking down it)
-    strip = far.resize((w, int(h * 0.52)), _I.BILINEAR).crop((0, 0, w, horizon))
+    # sky and peaks above the horizon: the top of the landscape, squashed
+    strip = far.resize((w, int(h * 0.70)), _I.BILINEAR).crop((0, 0, w, horizon))
     out.paste(strip, (0, 0))
-    # the floor, cover-cropped and flattened so the rock reads as a plane
-    fh = h - horizon + int(h * 0.06)
-    fw = int(fh * GROUND_FILE_ASPECT)
-    if fw < w:
-        fh = int(w / GROUND_FILE_ASPECT)
-        fw = w
-    tile = floor.resize((fw, fh), _I.BILINEAR)
-    x0 = (fw - w) // 2
-    out.paste(tile.crop((x0, 0, x0 + w, fh)), (0, horizon - int(h * 0.06)))
-    # the seam: a soft band of haze in the set's own light
-    haze = Image.new("L", (1, h), 0)
-    band = int(h * 0.12)
+
+    # the floor: rows near the horizon compress and widen, rows at the feet are
+    # stretched and narrow — the inverse-perspective row map, built at a quarter
+    # of the frame size and upscaled (it is a soft background either way)
+    fh = h - horizon
+    R, CW = 168, 480
+    src = np.asarray(floor, dtype=np.uint8)
+    sh_, sw_ = src.shape[:2]
+    rows = np.zeros((R, CW, 3), np.uint8)
+    xs0 = np.arange(CW)
+    norm = 1.0 - 1.0 / (1.0 + 4.2)
+    for j in range(R):
+        t = (j + 0.5) / R
+        va = (1.0 - 1.0 / (1.0 + 4.2 * t)) / norm
+        v = min(sh_ - 1, int(va * (sh_ - 1)))
+        k = 0.22 + 0.68 * (1.0 - t) ** 1.3
+        xs = np.clip(((xs0 - CW * 0.5) / CW * k + 0.5) * sw_, 0, sw_ - 1).astype(int)
+        rows[j] = src[v][xs]
+    out.paste(_I.fromarray(rows).resize((w, fh), _I.BILINEAR), (0, horizon))
+
+    # haze along the horizon: without it the two plates meet in a hard line
+    haze = Image.new("L", (w, h), 0)
+    hd = ImageDraw.Draw(haze)
+    band = int(h * 0.14)
     for i in range(band):
         y = horizon - band // 2 + i
         if 0 <= y < h:
-            haze.putpixel((0, y), int(150 * math.sin(math.pi * i / band) ** 0.8))
-    haze = haze.resize((w, h), _I.BILINEAR)
+            hd.line([(0, y), (w, y)], fill=int(150 * math.sin(math.pi * i / band) ** 0.7))
     tint = Image.new("RGB", (w, h), (226, 208, 188) if set_name == "mountain"
                      else (232, 206, 172))
-    out = Image.composite(tint, out, haze.point(lambda v: int(v * 0.55)))
+    out = Image.composite(tint, out, haze.point(lambda v: int(v * 0.5)))
     src = out
     vig = vignette()
     if vig.size != src.size:
         vig = vig.resize(src.size, _I.LANCZOS)
     src = _I.alpha_composite(src.convert("RGBA"), vig).convert("RGB")
-    if os.path.basename(path).startswith("ground_"):
-        # a floor plate seen from straight above is lit flat and reads much
-        # brighter than the landscape it replaces, so it is pulled down and
-        # cooled a touch: the fighters have to be the brightest thing in shot
-        src = _I.merge("RGB", [ch.point(lambda v, f=f: int(v * f))
-                               for ch, f in zip(src.split(), (0.80, 0.81, 0.86))])
     _bg_cache["plate"] = src
     _bg_cache["key"] = key
     return src
@@ -216,7 +225,7 @@ def draw_background(cv: Canvas, cam: dict, scene, w: int = DESIGN_W,
     bx, by = background_parallax(cam)
     # from above the painted landscape is not in shot at all: the floor is
     bg = background(bx, by, cam["zoom"], w, h,
-                    scene["ground_path"] if cam.get("high") else scene["bg_path"])
+                    ("high", scene["set"]) if cam.get("high") else scene["bg_path"])
     if cam["dof"] > 0.02:
         # bokeh the cheap way: blur a sixth-size copy and blow it back up. A
         # Gaussian on the full frame costs 24 ms; this costs 2 and reads softer
@@ -297,12 +306,12 @@ def shadow_box(cv: Canvas, sk, lift: float):
     c = cv.wp((cx, GROUND - 2))
     if cv.cam.sqy < 0.98:
         # from above the shadow falls away from the body, long and to one side
-        c = (c[0] + 30.0 * cv.unit(), c[1] + 12.0 * cv.unit())
+        c = (c[0] + 18.0 * cv.unit(), c[1] + 8.0 * cv.unit())
     rx = (26.0 + span * 0.86 + 18.0 * lift) * cv.unit() * sk.scale
     if cv.cam.sqy < 0.98:
         # from above the shadow is a pool at the feet, not a band across the
         # floor: keep it under the body or the patch reads as a grey slab
-        rx *= 0.62
+        rx *= 0.80
     lying = sk.pts[1][1] > GROUND - 74.0
     ry = rx * (0.085 if lying else (0.125 - 0.02 * min(lift, 1.0)))
     return (c[0] - rx, c[1] - ry, c[0] + rx, c[1] + ry)
@@ -526,15 +535,18 @@ def _head(cv: Canvas, c, r: float, facing: int, colour, dark, u: float,
 
     ex = c[0] + fx * r * 0.32
     ey = c[1] - r * 0.06
-    front = (ex + fx * r * 0.30, ey + r * 0.05)      # toward the nose, low
-    back = (ex - fx * r * 0.30, ey - r * 0.10)       # outer corner, high
-    topm = (ex + fx * r * 0.02, ey - r * 0.15)
-    botm = (ex + fx * r * 0.00, ey + r * 0.11)
+    # a small almond, not a mask: at forty pixels the head only has room for a
+    # dot of an eye and a line of brow, and anything bigger turns the face into
+    # a dark smear with a slash across it
+    front = (ex + fx * r * 0.19, ey + r * 0.03)      # toward the nose, low
+    back = (ex - fx * r * 0.19, ey - r * 0.05)       # outer corner, high
+    topm = (ex + fx * r * 0.01, ey - r * 0.10)
+    botm = (ex + fx * r * 0.00, ey + r * 0.07)
     cv.polygon([front, topm, back, botm], dark)
     # the iris burns inside the socket: this is the "glowing eye", and it is
     # what carries the expression when the head is only forty pixels across
     ix, iy = ex + fx * r * 0.10, ey - r * 0.02
-    ir = r * (0.105 + 0.030 * min(1.0, glow))
+    ir = r * (0.062 + 0.020 * min(1.0, glow))
     if glow > 0.02:
         cv.circle((ix, iy), ir * 3.2, (255, 198, 120),
                   width=0, fill=(255, 198, 120), alpha=int(40 + 110 * glow))
@@ -543,13 +555,13 @@ def _head(cv: Canvas, c, r: float, facing: int, colour, dark, u: float,
               width=0, fill=(255, 252, 240))
     # the brow is a thin stroke *above* the eye, never a slab welded to it: at
     # this size a filled wedge turns the whole face into one dark smear
-    droop = 0.06 + 0.16 * hurt - 0.05 * min(1.0, glow)
-    cv.line((ex - fx * r * 0.34, ey - r * 0.30 - r * droop * 0.5),
-            (ex + fx * r * 0.30, ey - r * 0.22 + r * droop),
-            max(1.6, 0.085 * r), dark, alpha=235, caps=True)
+    droop = 0.05 + 0.12 * hurt - 0.03 * min(1.0, glow)
+    cv.line((ex - fx * r * 0.22, ey - r * 0.34 - r * droop * 0.5),
+            (ex + fx * r * 0.22, ey - r * 0.28 + r * droop),
+            max(1.4, 0.055 * r), dark, alpha=215, caps=True)
 
     # a short mouth line, thinner than the socket, pulled down when hurt
-    mx, my = c[0] + fx * r * 0.50, c[1] + r * 0.44
+    mx, my = c[0] + fx * r * 0.46, c[1] + r * 0.40
     cv.line((mx - fx * r * 0.15, my - r * 0.02),
             (mx + fx * r * 0.13, my - r * 0.02 - r * 0.04 * hurt),
             2.6 * u, dark, alpha=170, caps=False)
@@ -562,6 +574,23 @@ def _speed(now, then, sid: int, dt: float = 0.05):
     return (b[0] - a[0], b[1] - a[1]), math.hypot(b[0] - a[0], b[1] - a[1]) / dt
 
 
+def pose_of(track, t: float, squash: float = 0.0, push: float = 0.0):
+    """The drawable pose: choreography, footwork, the blow, then the IK solve.
+
+    Footwork is applied *before* ``to_pose`` because it only edits the pose dict
+    — the foot offsets and lifts the step cycle computes — so the leg IK still
+    does the solve it was tuned against.
+    """
+    from . import footwork
+    from .impact import compress
+    p, x = track.sample(t)
+    p = footwork.apply(track, t, p)
+    if squash > 0.002:
+        p = compress(p, squash)
+    return to_pose(p, x + push, GROUND, facing=track.facing,
+                   scale=FIG_SCALE, widen=STANCE)
+
+
 def body(track, t: float, squash: float = 0.0, push: float = 0.0):
     """The skeleton of one fighter at animation time ``t``.
 
@@ -569,13 +598,7 @@ def body(track, t: float, squash: float = 0.0, push: float = 0.0):
     ``impact.compress``) and ``push`` shoves it back off its feet; both come
     from the same envelope, so the shadow and the smear follow the body.
     """
-    if squash <= 0.002 and abs(push) < 0.5:
-        return track.skel(t)
-    from .impact import compress
-    p, x = track.sample(t)
-    pose = to_pose(compress(p, squash), x + push, GROUND, facing=track.facing,
-                   scale=FIG_SCALE, widen=STANCE)
-    return solve(pose)
+    return solve(pose_of(track, t, squash, push))
 
 
 def draw_fighter(cv: Canvas, track, t: float) -> None:
@@ -587,15 +610,8 @@ def draw_fighter(cv: Canvas, track, t: float) -> None:
     """
     squash = getattr(track, "_squash", 0.0)
     push = getattr(track, "_push", 0.0)
-    if squash > 0.002 or abs(push) >= 0.5:
-        from .impact import compress
-        p, x = track.sample(t)
-        pose = to_pose(compress(p, squash), x + push, GROUND, facing=track.facing,
-                       scale=FIG_SCALE, widen=STANCE)
-        sk = solve(pose)
-    else:
-        pose = track.pose_at(t)
-        sk = solve(pose)
+    pose = pose_of(track, t, squash, push)
+    sk = solve(pose)
     u = cv.unit() * pose.scale
     colour, dark = track.colour, track.dark
     g = GROUND

@@ -143,13 +143,19 @@ def build(set_name: str = "mountain") -> dict:
     T = PS.TIGHT
 
     # ---------------------------------------------------------------- 0-2.4 intro
-    red.key(0.0, I, 470)
-    blue.key(0.0, I, 812)
+    # entrance: both fighters run in from off-frame and skid to a stop in front
+    # of each other. The distance is what makes the feet step (see footwork.py)
+    red.key(0.0, I, 402)
+    blue.key(0.0, I, 878)
     title(0.35, 2.55, words["title"], "title")
     title(0.95, 2.75, "RED  VS  BLUE", "sub")
 
-    red.key(1.70, fade(G, torso=-82), 500)
-    blue.key(1.75, fade(G, torso=-82), 786)
+    red.key(0.45, fade(I, torso=-8), 412, "out")
+    blue.key(0.48, fade(I, torso=-8), 868, "out")
+    red.key(1.32, fade(G, torso=-84), 520, "out")
+    blue.key(1.36, fade(G, torso=-84), 760, "out")
+    red.key(1.78, fade(G, torso=-66, crouch=10), 548)
+    blue.key(1.82, fade(G, torso=-66, crouch=10), 738)
     red.key(2.30, G, 545)
     blue.key(2.35, G, 742)
     title(2.15, 2.85, "FIGHT!", "fight")

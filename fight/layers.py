@@ -22,32 +22,47 @@ from PIL import Image, ImageDraw, ImageFilter
 #: how much faster than the camera the near layer travels
 PARALLAX = 1.75
 #: how much of the frame height the layer is allowed to reach
-BAND = 0.20
+BAND = 0.13
 
 _cache: dict = {}
 
 
-def _rock(d, rng, x, y, w, h, col):
-    """A lump of rock: a polygon with a flat base and a broken top."""
+def _boulder(d, rng, x, y, w, h, col):
+    """One big angular lump, flat on the ground line.
+
+    Small repeated bumps along the bottom edge read as a row of heads — an
+    audience sitting in the dark — so the near layer is a handful of large
+    corners instead: a ledge we are standing behind, not a crowd.
+    """
+    n = rng.randint(4, 6)
     pts = [(x, y)]
-    n = max(4, int(w / 26))
     for i in range(n + 1):
         u = i / n
         px = x + w * u
-        py = y - h * (0.25 + 0.75 * math.sin(math.pi * u) ** 0.7) * rng.uniform(0.7, 1.15)
+        py = y - h * (0.30 + 0.70 * math.sin(math.pi * u) ** 0.5) * rng.uniform(0.75, 1.2)
         pts.append((px, py))
     pts.append((x + w, y))
     d.polygon(pts, fill=col)
 
 
-def _pine(d, rng, x, y, h, col):
-    w = h * rng.uniform(0.30, 0.42)
-    for tier in range(3):
-        v = 1.0 - tier * 0.24
-        top = y - h * (1.0 - tier * 0.22)
-        d.polygon([(x, top), (x - w * v * 0.5, top + h * 0.55), (x, top + h * 0.44),
-                   (x + w * v * 0.5, top + h * 0.55)], fill=col)
-    d.rectangle([x - w * 0.06, y - h * 0.16, x + w * 0.06, y], fill=col)
+def _ledge(d, rng, base, lw, h, span, col, soft: bool):
+    """The near edge of the ground: a long angular silhouette.
+
+    ``soft`` gives the desert its dune curve; anything else is broken rock, but
+    both are made of a few long slopes so nothing in the band can be mistaken
+    for a line of small figures.
+    """
+    step = max(240, lw // 5)
+    pts = []
+    x = -step
+    while x < lw + step:
+        level = span * (0.35 if soft else rng.uniform(0.10, 1.0))
+        if soft:
+            level = span * (0.30 + 0.35 * math.sin(x / (lw * 0.42) * math.pi))
+        pts.append((x, base - level))
+        x += step * (0.7 if soft else rng.uniform(0.45, 1.0))
+    poly = [(px, base + h) for px, _ in pts] + list(reversed(pts))
+    d.polygon(poly, fill=col)
 
 
 def foreground(set_name: str, w: int, h: int) -> Image.Image:
@@ -57,42 +72,23 @@ def foreground(set_name: str, w: int, h: int) -> Image.Image:
         return _cache[key]
     lw, lh = int(w * 2.6), int(h * 1.5)
     rng = random.Random(7 if set_name == "mountain" else 19)
-    img = Image.new("RGB", (lw, lh), (0, 0, 0))
     mask = Image.new("L", (lw, lh), 0)
     d = ImageDraw.Draw(mask)
 
-    # the visible window sits in the middle of the layer, so the silhouettes
-    # have to stand on the window's bottom edge, not on the layer's
+    # the visible window sits in the middle of the layer, so the ledge has to
+    # stand on the window's bottom edge, not on the layer's
     base = (lh + h) * 0.5 - 2
-    # the band: a soft ridge of ground that never rises far into the frame
-    step = max(40, w // 26)
-    ridge = []
-    for x in range(-step, lw + step, step):
-        rise = rng.uniform(0.0, 0.55) * h * BAND * 0.55
-        ridge.append((x, base - rise))
-    poly = [(x, lh + 10) for x, _ in ridge] + list(reversed(ridge))
-    d.polygon(poly, fill=225)
-
-    if set_name == "mountain":
-        for _ in range(int(lw / 150)):
-            x = rng.uniform(0, lw)
-            _rock(d, rng, x - 90, base, rng.uniform(110, 230), rng.uniform(40, 120), 255)
-        for _ in range(int(lw / 110)):
-            x = rng.uniform(0, lw)
-            _pine(d, rng, x, base - rng.uniform(0, 14), rng.uniform(60, 150), 255)
-    else:
-        # dunes: long, low, and much softer than rock
-        for _ in range(int(lw / 260)):
-            x = rng.uniform(0, lw)
-            ww = rng.uniform(260, 520)
-            d.pieslice([x, base - ww * 0.30, x + ww, base + ww * 0.30], 180, 360, fill=235)
-        for _ in range(int(lw / 420)):
-            x = rng.uniform(0, lw)
-            _rock(d, rng, x - 70, base, rng.uniform(90, 170), rng.uniform(36, 78), 255)
+    span = h * BAND * 0.85
+    _ledge(d, rng, base, lw, lh, span, 235, soft=(set_name != "mountain"))
+    # two or three big corners breaking the line
+    for _ in range(max(2, int(lw / 900))):
+        x = rng.uniform(-w * 0.2, lw - w * 0.2)
+        _boulder(d, rng, x, base, rng.uniform(w * 0.26, w * 0.52),
+                 rng.uniform(span * 0.55, span * 1.15), 255)
 
     mask = mask.filter(ImageFilter.GaussianBlur(w * 0.006))
     # it is a near-lens element: out of focus, and never fully opaque
-    alpha = mask.point(lambda v: int(v * 0.80))
+    alpha = mask.point(lambda v: int(v * 0.66))
     img = Image.new("RGB", (lw, lh), (0, 0, 0))
     layer = Image.merge("RGBA", (*img.split(), alpha))
     tint = Image.new("RGB", (lw, lh), (14, 12, 15))
