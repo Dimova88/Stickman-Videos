@@ -126,7 +126,10 @@ def build(set_name: str = "mountain") -> dict:
     # ---------------------------------------------------------------- helpers
     def impact(t, kind, size=1.0, dmg_red=0.0, dmg_blue=0.0, anchor=None, by="red"):
         """kind: block | hit | clash | final. By: who throws it (or both)."""
-        impacts.append({"t": t, "kind": kind, "size": size, "by": by,
+        # the vector of the blow, for the camera: +1 lands to the right, -1 to
+        # the left, 0 is a clash straight down the middle
+        dx = 1.0 if by == "red" else (-1.0 if by == "blue" else 0.0)
+        impacts.append({"t": t, "kind": kind, "size": size, "by": by, "dx": dx,
                         "dmg_red": dmg_red, "dmg_blue": dmg_blue, "anchor": anchor})
 
     def dust(t):

@@ -429,6 +429,60 @@ consequence of the blow, which is why four knockdowns and the finisher all have
 the same weight and only their power differs (34 / 32 / 30 / 36 px, and 55 px for
 the knockout).
 
+### The camera: shots, whip pans and depth (*fight/camera.py*, *fight/layers.py*)
+
+The 30 s test used to be one locked-off wide shot inside an arcade overlay. Both
+of those are gone: **there is no HUD any more** (no bars, no timer, no round
+caption — only the story cards, `FIGHT!`, `DOWN!`, `K.O.`, `BLUE WINS`), and the
+film is cut like a scene rather than watched like a fight on a screen.
+
+**One transform for everything.** Until this pass the camera only existed in the
+background: the plate was cropped with a push-in while the fighters were drawn
+with a fixed transform. Now a single `Cam(x, y, zoom, shake)` drives the plate,
+the bodies, the shadows, the smear and the dust, so a shot is a list of numbers
+about where to look.
+
+**A shot list**, keyed on what the camera is pointed at, not on pixel positions
+(so it survives any choreography change):
+
+| shot | what it is |
+| --- | --- |
+| `action` | the middle of the pair, framed by where the *floor* sits in frame |
+| `down` | follows the fighter on the floor down — floor-level, close |
+| `impact` | the last impact point: the camera arrives on the blow |
+| `winner` | the one still standing, the body in the lower third |
+
+Framing is expressed as `ground` (where the floor line sits, 0.72 = low camera,
+0.80 = level) instead of a hard-coded height, so a shot reads the same at any
+zoom. 19 shots in 30 s, 4.5 s of them close-ups.
+
+**Whip pans and punch-ins.** A shot marked `whip` flies from the previous
+camera position in 0.13 s and leaves a horizontal smear (the finished frame is
+squashed and blended back over itself, hardest at the start of the move);
+measured on the master, a whip produces three frames of 9/15/13 (out of 255)
+change against a baseline of 1.4. Every contact also punches the lens in — a
+decaying `exp(-t/0.13)` kick of 5–16 % on top of the shot's zoom.
+
+**Directional shake.** Each impact now carries `dx`, the vector of the blow. The
+camera kicks **along** it at full amplitude and rings only 35 % across it, so a
+right hand reads as a right hand and a clash reads as a vertical slam. The shake
+rides the animation clock, so it is frozen with the bodies during the hitstop.
+
+**Depth.** Three things, none of them a 3D engine:
+
+* the plate is cropped **behind** the camera (36 % of its travel): the scenery
+  lags the fighters;
+* a procedurally drawn near layer (rock and pines on the mountain, dunes and
+  boulders on the desert) sits **in front of everything**, travels at 175 % of
+  the camera, is never fully opaque and is blurred — it is what turns a pan into
+  a move through space;
+* close-ups carry a `dof` value that blurs the plate into bokeh while the
+  fighters stay sharp, because the lens is on them. It is done by blurring a
+  sixth-size copy and blowing it back up: 2 ms instead of the 24 ms a Gaussian
+  on the full frame costs.
+
+Cost: a frame went from 10.4 ms to 20–35 ms (the per-frame plate resample plus
+the blur), and the 30 s master renders in **24 s on 2 vCPU** instead of 16.
 ### A second set: the desert
 
 The same fight re-staged on a new plate (`--set desert`), with its own title
@@ -437,8 +491,8 @@ and the zoom range are all derived from the scene.
 
 | | mountain | desert |
 | --- | --- | --- |
-| frame (720p, one core) | 10.4 ms | 10.0 ms |
-| full render, 2 cores | 15.2 s | **15.6 s** |
+| frame (720p, one core) | 20.6 ms | 20.9 ms |
+| full render, 2 cores | 24.1 s | **24.1 s** |
 | encode, same settings | 10.0 s | 10.4 s |
 | master size | 9.28 MB | 12.39 MB |
 | per-frame PSNR vs lossless source | median 47.9 dB | median 46.9 dB |
@@ -457,6 +511,8 @@ and desert — with the full HUD and soundtrack, both rendered in ~16 s, and the
 figures carrying a bowed spine, articulated feet and hands, a face and speed
 deformation, three close-up inserts on the heaviest impacts (one of them an
 X-ray of the skull), hitstop and compression on every contact, a coiled wind-up
-before every landed blow, and knockdowns that fly, bounce, skid and climb back
-up. Next: footwork (real steps instead of pivots), then the one-minute version
-with chained choreography, weapons and a 1-vs-many round.
+before every landed blow, knockdowns that fly, bounce, skid and climb back up,
+and — new — no HUD at all, a 19-shot camera with whip pans, punch-ins,
+floor-level shots, directional shake and a parallax foreground layer. Next:
+foreshortened inserts (the fist coming at the lens), a top-down round, footwork,
+then the one-minute version with chained choreography and weapons.

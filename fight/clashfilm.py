@@ -15,8 +15,10 @@ import time
 import wave
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+from .camera import camera
+from .layers import draw_foreground
 from .clash import (BLUE, BLUE_DARK, DESIGN_H, DESIGN_W, DURATION, FIG_SCALE, FPS,
                     GROUND, INK, RED, RED_DARK, STANCE, build)
 from .poses import to_pose
@@ -66,57 +68,49 @@ ZOOM_LEVELS = 65                     # 0.6 px of scale between neighbours: the
 _bg_cache: dict = {}
 
 
-def _build_backgrounds(w: int, h: int, zmin: float, zmax: float, path: str):
-    """One pre-scaled landscape plate per zoom level, vignette baked in.
+def _plate(path: str) -> Image.Image:
+    """The painted plate, at its own resolution, vignette baked in.
 
-    Each plate is the output size plus the pan margin, so a finished frame is an
-    integer crop from one or two of them and nothing is resampled per frame.
+    There used to be a ladder of 65 pre-zoomed plates: a frame was an integer
+    crop, which was fast but froze the camera at one place. Now the camera
+    moves, so a frame is a resample of one high-res plate. The vignette is
+    baked into the plate rather than composited per frame: a full-frame alpha
+    composite costs ~8 ms, and this way it is free.
     """
+    key = ("plate", path)
+    if _bg_cache.get("key") == key:
+        return _bg_cache["plate"]
     from PIL import Image as _I
-    k = w / DESIGN_W
-    src = Image.open(path).convert("RGB")
-    if src.size != (BG_W, BG_H):
-        src = src.resize((BG_W, BG_H), _I.LANCZOS)
-    src = src.resize((int(round(BG_SCALED[0] * k)), int(round(BG_SCALED[1] * k))),
-                     _I.LANCZOS)
-    # the plate is the padded landscape; the pan margin is whatever is left
-    pw, ph = src.size
-    padx = max(1, (pw - w) // 2)
-    pady = max(1, (ph - h) // 2)
-
+    src = _I.open(path).convert("RGB")
+    # exact 16:9, so a crop at zoom 1 fills the frame instead of coming up a few
+    # pixels short on one axis (the painted plates are a hair wider than 16:9)
+    want = round(src.height * DESIGN_W / DESIGN_H)
+    if src.width != want:
+        x0 = (src.width - want) // 2
+        src = src.crop((x0, 0, x0 + want, src.height))
     vig = vignette()
-    if vig.size != (w, h):
-        vig = vig.resize((w, h), _I.BILINEAR)
-    vig_rgb, vig_mask = vig.convert("RGB"), vig.split()[3]
-
-    plates = []
-    for i in range(ZOOM_LEVELS):
-        z = zmin + (zmax - zmin) * (i / (ZOOM_LEVELS - 1))
-        sw, sh = pw / z, ph / z
-        cx, cy = src.width * 0.5, src.height * 0.5
-        plate = src.resize((pw, ph), _I.BILINEAR,
-                           box=(cx - sw / 2, cy - sh / 2, cx + sw / 2, cy + sh / 2))
-        # the vignette is baked in at the nominal framing, so most frames get it
-        # for free; the camera can drag it by at most the pan margin (20x11 px),
-        # which on a gradient this soft moves the alpha by ~2/255
-        plate.paste(vig_rgb, (padx, pady), vig_mask)
-        plates.append(plate)
-    return plates, padx, pady
+    if vig.size != src.size:
+        vig = vig.resize(src.size, _I.LANCZOS)
+    src = _I.alpha_composite(src.convert("RGBA"), vig).convert("RGB")
+    _bg_cache["plate"] = src
+    _bg_cache["key"] = key
+    return src
 
 
-def background(zoom: float, w: int, h: int, zmin: float, zmax: float, path: str):
-    """The two plates straddling `zoom`, plus the blend weight between them."""
-    key = (w, h, zmin, zmax, path)
-    if _bg_cache.get("key") != key:
-        _bg_cache["plates"], _bg_cache["padx"], _bg_cache["pady"] = \
-            _build_backgrounds(w, h, zmin, zmax, path)
-        _bg_cache["key"] = key
-    plates = _bg_cache["plates"]
-    f = (zoom - zmin) / max(zmax - zmin, 1e-6) * (ZOOM_LEVELS - 1)
-    f = min(max(f, 0.0), ZOOM_LEVELS - 1.0)
-    k = int(f)
-    k2 = min(k + 1, ZOOM_LEVELS - 1)
-    return plates[k], plates[k2], f - k
+def background(cx: float, cy: float, zoom: float, w: int, h: int, path: str):
+    """The plate as the camera sees it: a crop around (cx, cy) at ``zoom``.
+
+    Design space maps onto the plate 1:1 at zoom 1, so a crop is a straight
+    scale of the design coordinates.
+    """
+    src = _plate(path)
+    k = (src.width / DESIGN_W) / max(zoom, 1.0)
+    rw, rh = w * k, h * k
+    u = cx * src.width / DESIGN_W
+    v = cy * src.height / DESIGN_H
+    x0 = min(max(0.0, u - rw * 0.5), max(0.0, src.width - rw))
+    y0 = min(max(0.0, v - rh * 0.5), max(0.0, src.height - rh))
+    return src.resize((w, h), Image.BILINEAR, box=(x0, y0, x0 + rw, y0 + rh))
 
 
 def vignette() -> Image.Image:
@@ -139,53 +133,21 @@ def vignette() -> Image.Image:
 
 
 # ---------------------------------------------------------------------- camera
-def camera_at(keys, t: float):
-    """Returns (dx, dy, zoom) for the landscape crop."""
-    if t <= keys[0][0]:
-        return keys[0][1:]
-    if t >= keys[-1][0]:
-        return keys[-1][1:]
-    for i in range(len(keys) - 1):
-        t0, x0, y0, z0 = keys[i]
-        t1, x1, y1, z1 = keys[i + 1]
-        if t0 <= t <= t1:
-            u = (t - t0) / max(t1 - t0, 1e-9)
-            u = u * u * (3 - 2 * u)
-            return (x0 + (x1 - x0) * u, y0 + (y1 - y0) * u, z0 + (z1 - z0) * u)
-    return keys[-1][1:]
-
-
-def shake_at(impacts, t: float):
-    """Exponential shake for 0.32 s after an impact; the final hit hits harder."""
-    sx = sy = 0.0
-    for e in impacts:
-        age = t - e["t"]
-        if not (0.0 <= age < 0.32):
-            continue
-        k = (1.0 - age / 0.32) ** 2
-        amp = (14.0 if e["kind"] == "final" else
-               9.0 if e["kind"] == "clash" else
-               6.0 if e["kind"] == "hit" else 3.2) * e.get("size", 1.0)
-        sx += math.sin(age * 71.0 + e["t"] * 13.0) * amp * k
-        sy += math.cos(age * 57.0 + e["t"] * 7.0) * amp * 0.7 * k
-    return sx, sy
-
-
 # --------------------------------------------------------------------- drawing
-def draw_background(cv: Canvas, t: float, scene) -> None:
-    dx, dy, zoom = camera_at(scene["camera"], t)
-    sx, sy = shake_at(scene["impacts"], t)
-    zs = [k[3] for k in scene["camera"]]
-    p1, p2, a = background(zoom, cv.w, cv.h, min(zs), max(zs), scene["bg_path"])
-    padx, pady = _bg_cache["padx"], _bg_cache["pady"]
-    k = cv.w / DESIGN_W
-    ox = int(round(min(2 * padx, max(0.0, padx + (dx + sx) * k))))
-    oy = int(round(min(2 * pady, max(0.0, pady + (dy + sy) * k))))
-    bg = p1.crop((ox, oy, ox + cv.w, oy + cv.h))
-    if a > 0.002:
-        bg = Image.blend(bg, p2.crop((ox, oy, ox + cv.w, oy + cv.h)), a)
-    # a crop is already an independent image, so it becomes the frame outright
-    # instead of being copied into a fresh canvas (+1 ms/frame)
+def draw_background(cv: Canvas, cam: dict, scene, w: int = DESIGN_W,
+                    h: int = DESIGN_H) -> None:
+    """Paint the plate where the camera is looking, then blur it if the shot is
+    a close one (the fighters are always sharp: the lens is on them)."""
+    from .camera import background_parallax
+    bx, by = background_parallax(cam)
+    bg = background(bx, by, cam["zoom"], w, h, scene["bg_path"])
+    if cam["dof"] > 0.02:
+        # bokeh the cheap way: blur a sixth-size copy and blow it back up. A
+        # Gaussian on the full frame costs 24 ms; this costs 2 and reads softer
+        small = bg.resize((w // 6, h // 6), Image.BILINEAR)
+        r = 0.8 + 2.4 * cam["dof"]
+        bg = small.filter(ImageFilter.GaussianBlur(r)).resize(
+            (w, h), Image.BICUBIC)
     cv.img = bg
     cv.d = ImageDraw.Draw(bg)
     cv._draw = None
@@ -245,17 +207,25 @@ def scene(set_name: str = "mountain"):
 
 
 def shadow_box(cv: Canvas, sk, lift: float):
-    """Where the contact shadow of one fighter sits, in screen pixels."""
-    fx = (sk.pts[8][0] + sk.pts[10][0]) * 0.5
-    c = cv.wp((fx, GROUND - 2))
-    rx = (78.0 + 26.0 * lift) * cv.unit() * sk.scale
-    ry = rx * (0.17 - 0.04 * min(lift, 1.0))
+    """Where the contact shadow of one fighter sits, in screen pixels.
+
+    Measured from the body's own horizontal extent, so a fighter lying on the
+    floor gets a long thin shadow under the whole body instead of a round blob
+    under a pair of feet that are nowhere near it.
+    """
+    xs = [p[0] for p in sk.pts.values()] + [sk.head[0]]
+    cx = (min(xs) + max(xs)) * 0.5
+    span = (max(xs) - min(xs)) * 0.5
+    c = cv.wp((cx, GROUND - 2))
+    rx = (26.0 + span * 0.86 + 18.0 * lift) * cv.unit() * sk.scale
+    lying = sk.pts[1][1] > GROUND - 74.0
+    ry = rx * (0.085 if lying else (0.125 - 0.02 * min(lift, 1.0)))
     return (c[0] - rx, c[1] - ry, c[0] + rx, c[1] + ry)
 
 
 def shadow(ov: "Overlay", sk, lift: float) -> None:
     """A flat contact shadow: wide and faint under an airborne fighter."""
-    alpha = int(max(16, 76 - 40 * lift))
+    alpha = int(max(9, 44 - 26 * lift))
     ov.ellipse(shadow_box(ov.cv, sk, lift), fill=(20, 16, 14, alpha))
 
 
@@ -464,30 +434,30 @@ def _head(cv: Canvas, c, r: float, facing: int, colour, dark, u: float,
                 (c[0] + fx * r * 0.80, c[1] + r * 0.16),
                 (c[0] + fx * r * 0.70, c[1] + r * 0.02)], colour)
 
-    ex = c[0] + fx * r * 0.30
-    ey = c[1] - r * 0.04
-    front = (ex + fx * r * 0.40, ey + r * 0.07)      # toward the nose, low
-    back = (ex - fx * r * 0.36, ey - r * 0.14)       # outer corner, high
-    topm = (ex + fx * r * 0.04, ey - r * 0.22)
-    botm = (ex + fx * r * 0.02, ey + r * 0.14)
+    ex = c[0] + fx * r * 0.32
+    ey = c[1] - r * 0.06
+    front = (ex + fx * r * 0.30, ey + r * 0.05)      # toward the nose, low
+    back = (ex - fx * r * 0.30, ey - r * 0.10)       # outer corner, high
+    topm = (ex + fx * r * 0.02, ey - r * 0.15)
+    botm = (ex + fx * r * 0.00, ey + r * 0.11)
     cv.polygon([front, topm, back, botm], dark)
     # the iris burns inside the socket: this is the "glowing eye", and it is
     # what carries the expression when the head is only forty pixels across
-    ix, iy = ex + fx * r * 0.16, ey - r * 0.01
-    ir = r * (0.145 + 0.035 * min(1.0, glow))
+    ix, iy = ex + fx * r * 0.10, ey - r * 0.02
+    ir = r * (0.105 + 0.030 * min(1.0, glow))
     if glow > 0.02:
-        cv.circle((ix, iy), ir * 3.0, (255, 198, 120),
-                  width=0, fill=(255, 198, 120), alpha=int(44 + 120 * glow))
+        cv.circle((ix, iy), ir * 3.2, (255, 198, 120),
+                  width=0, fill=(255, 198, 120), alpha=int(40 + 110 * glow))
     cv.circle((ix, iy), ir, (255, 226, 158), width=0, fill=(255, 226, 158))
-    cv.circle((ix + fx * ir * 0.16, iy - ir * 0.20), ir * 0.46, (255, 252, 240),
+    cv.circle((ix + fx * ir * 0.18, iy - ir * 0.22), ir * 0.44, (255, 252, 240),
               width=0, fill=(255, 252, 240))
-    # the brow: a wedge over the socket, thick outside and riding down toward
-    # the nose. Slant = anger, and it steepens when he is swinging.
-    droop = 0.08 + 0.14 * hurt
-    lift = 0.10
-    tb = (back[0], back[1] - r * (0.12 + lift + 0.06 * min(1.0, glow)))
-    tf = (front[0] + fx * r * 0.02, front[1] - r * (0.15 + lift - droop))
-    cv.polygon([back, tb, tf, front], dark)
+    # the brow is a thin stroke *above* the eye, never a slab welded to it: at
+    # this size a filled wedge turns the whole face into one dark smear
+    droop = 0.06 + 0.16 * hurt - 0.05 * min(1.0, glow)
+    cv.line((ex - fx * r * 0.34, ey - r * 0.30 - r * droop * 0.5),
+            (ex + fx * r * 0.30, ey - r * 0.22 + r * droop),
+            max(1.6, 0.085 * r), dark, alpha=235, caps=True)
+
     # a short mouth line, thinner than the socket, pulled down when hurt
     mx, my = c[0] + fx * r * 0.50, c[1] + r * 0.44
     cv.line((mx - fx * r * 0.15, my - r * 0.02),
@@ -659,6 +629,9 @@ def trails(cv: Canvas, track, t: float, dt: float = 0.075) -> None:
     then = track.skel(t - dt)
     u = cv.unit() * now.scale
     tint = _lighten(track.colour, 0.40)
+    # a smear painted at 1.5x zoom covers 2.25x the area and reads as a pane of
+    # glass: keep its opacity in step with how tight the shot is
+    thin = min(1.0, 1.0 / max(1.0, cv.cam.zoom) ** 1.3)
     for sid, mid in ((4, None), (6, 5), (8, 7), (10, 9)):
         pivot = now.pts[mid] if mid is not None else now.starts[sid]
         b = now.pts[sid]
@@ -671,9 +644,9 @@ def trails(cv: Canvas, track, t: float, dt: float = 0.075) -> None:
         if b[1] > GROUND - 14 or pivot[1] > GROUND - 14:
             continue
         P, A, B = cv.wp(pivot), cv.wp(a), cv.wp(b)
-        cv.polygon([P, A, B], tint, alpha=int(64 * k))
+        cv.polygon([P, A, B], tint, alpha=int(64 * k * thin))
         cv.polygon([P, B, ((B[0] + P[0]) * 0.5, (B[1] + P[1]) * 0.5)], tint,
-                   alpha=int(40 * k))
+                   alpha=int(40 * k * thin))
         if k > 0.45:
             f = 0.28 * (k - 0.45) / 0.55
             vx, vy = B[0] - A[0], B[1] - A[1]
@@ -683,7 +656,7 @@ def trails(cv: Canvas, track, t: float, dt: float = 0.075) -> None:
             nx, ny = -vy / L, vx / L
             cv.polygon([(B[0] + nx * w, B[1] + ny * w), tip,
                         (B[0] - nx * w, B[1] - ny * w)],
-                       tint, alpha=int(104 * k))
+                       tint, alpha=int(104 * k * thin))
 
 
 # --------------------------------------------------------------------- effects
@@ -843,7 +816,13 @@ def draw_text(cv: Canvas, text: str, xy, size: int, fill, alpha=255, anchor="mm"
     d.text(xy, text, font=f, fill=fill, anchor=anchor)
 
 
+HUD = False          # no bars, no timer, no round caption: cinema, not arcade
+
+
 def draw_hud(cv: Canvas, scene, t: float) -> None:
+    """The arcade overlay. Off by default now — the film has no interface."""
+    if not HUD:
+        return draw_titles(cv, scene, t)
     d = ImageDraw.Draw(cv.img)
 
     # cinematic bars
@@ -874,10 +853,15 @@ def draw_hud(cv: Canvas, scene, t: float) -> None:
     ss = int(round(remain))
     draw_text(cv, f"{ss // 60:01d}:{ss % 60:02d}", (DESIGN_W // 2, 64), 46,
               (252, 250, 244), mono=True)
+    draw_titles(cv, scene, t)
 
-    # markers
+
+def draw_titles(cv: Canvas, scene, t: float) -> None:
+    """The cards: title, FIGHT!, DOWN!, K.O., the winner. Never the interface."""
     for txt in scene["texts"]:
         if not (txt["t0"] <= t <= txt["t1"]):
+            continue
+        if txt["style"] == "hud" and not HUD:
             continue
         style = txt["style"]
         fade = min(1.0, (t - txt["t0"]) / 0.18, (txt["t1"] - t) / 0.22)
@@ -921,18 +905,21 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
     finished frame is resampled, which makes any smaller size a true preview of
     the master instead of a second layout.
     """
-    cam = Cam(640.0, 360.0, 1.0)
-    cv = Canvas(DESIGN_W, DESIGN_H, cam)
+    ta = scene["clock"].at(t)
+    # one camera for the whole frame: plate, bodies, shadow, dust
+    cam_state = camera(scene, t, ta)
+    cv = Canvas(DESIGN_W, DESIGN_H,
+                Cam(cam_state["x"], cam_state["y"], cam_state["zoom"],
+                    cam_state["shake_x"], cam_state["shake_y"]))
     # The animation clock: at every contact it stops for a few frames (the
     # hitstop) and then catches up at 2x, so nothing drifts over the film. The
     # whole painted world rides it — bodies, shadow, smear, dust, landscape and
     # camera shake — so the instant of contact is one held frame. Only the
     # impact flash and the HUD stay on the real clock: the world freezes, the
     # blow rings out.
-    ta = scene["clock"].at(t)
     cut = cut_at(t)
     if cut is None:
-        draw_background(cv, ta, scene)
+        draw_background(cv, cam_state, scene)
 
     if cut is not None:
         # the close-up register: a cut, not a camera move, so no HUD shadows,
@@ -975,6 +962,10 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
 
     draw_dust(scene["dust"], ta, cv.unit(), *cv.wp((DESIGN_W * 0.5, GROUND)), cv)
 
+    # the near layer: rock and brush in front of the lens, moving against the
+    # camera — the depth cue that a static plate can never give
+    draw_foreground(cv, cam_state, scene["set"])
+
     flash = []
     draw_impacts(cv, scene["impacts"], t, flash)
     cv.flush()
@@ -986,6 +977,14 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
                      (0, 0))
 
     draw_hud(cv, scene, t)
+
+    # a whip pan leaves a streak: squash the finished frame horizontally and
+    # blend it back over itself, hardest at the start of the move
+    if cam_state["whip"] > 0.02:
+        wsh = max(16, int(DESIGN_W * (1.0 - 0.11 * cam_state["whip"])))
+        streak = cv.img.resize((wsh, DESIGN_H), Image.BILINEAR).resize(
+            (DESIGN_W, DESIGN_H), Image.BILINEAR)
+        cv.img = Image.blend(cv.img, streak, 0.55 * cam_state["whip"])
 
     # fades
     fade = 0.0
