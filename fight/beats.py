@@ -244,7 +244,12 @@ def compile_beats(beats, tracks, *, guard, on_impact=None, on_dust=None,
                     continue
                 if tr.sample(t0)[0].get("hip", 999.0) < 60.0:
                     continue                      # a body on the floor stays put
-                tr.key(t0 - 0.30, dict(waiting or guard), lanes[name], "out")
+                # a man waiting his turn is not a statue: he shifts his
+                # weight, and a lane that breathes reads as a fighter holding
+                # position instead of as a prop parked on the ground
+                phase = (sum(map(ord, name)) % 7) * 0.9
+                sway = 16.0 * math.sin(t0 * 1.9 + phase)
+                tr.key(t0 - 0.30, dict(waiting or guard), lanes[name] + sway, "out")
 
         if on_impact:
             on_impact(b)
