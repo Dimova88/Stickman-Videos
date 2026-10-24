@@ -432,6 +432,25 @@ def build(set_name: str = "mountain") -> dict:
     # A strike only reads if the fist (or foot) actually arrives. For every
     # impact, step the attacker in at that key until the striking limb is on the
     # target, while keeping the pair from collapsing into one silhouette.
+    def kd_times(tr):
+        out = set()
+        for g in getattr(tr, "_kd", ()):
+            out.update(t for t, _f, _p in g["fly"])
+            if g["guard"] is not None:
+                out.add(g["guard"])
+        return out
+
+    def _nearest_key(tr, t):
+        """The nearest key that is not part of a knockdown.
+
+        A knockdown key sits a frame or two after the contact, so picking the
+        nearest key by time used to move the *launch* instead of the fist and
+        leave the blow short of the head.
+        """
+        skip = kd_times(tr)
+        cands = [i for i, k in enumerate(tr.keys) if k[0] not in skip]
+        return min(cands, key=lambda i: abs(tr.keys[i][0] - t))
+
     def strike_of(t: float):
         """Who is attacking at t, and with which limb.
 
@@ -471,7 +490,7 @@ def build(set_name: str = "mountain") -> dict:
                     continue
                 shift = err * 0.5
                 for tr, sgn in ((red, -1.0), (blue, 1.0)):
-                    idx = min(range(len(tr.keys)), key=lambda i: abs(tr.keys[i][0] - t))
+                    idx = _nearest_key(tr, t)
                     kt, kp, kx, ke = tr.keys[idx]
                     tr.keys[idx] = (kt, kp, kx + sgn * shift, ke)
                 continue
@@ -499,7 +518,7 @@ def build(set_name: str = "mountain") -> dict:
             if step <= 0.0:
                 continue
             for tr in climbers:
-                idx = min(range(len(tr.keys)), key=lambda i: abs(tr.keys[i][0] - t))
+                idx = _nearest_key(tr, t)
                 kt, kp, kx, ke = tr.keys[idx]
                 tr.keys[idx] = (kt, kp, kx + step * tr.facing, ke)
 
@@ -529,13 +548,15 @@ def build(set_name: str = "mountain") -> dict:
                                 ks[i + 1] = (t1, p1, x1 + sgn * push * w1 * step, e1)
                                 break
                 t += 0.1
-    # The knockdowns are placed from the position the contact actually ended
-    # up at, and before the reach pass, so the blows after a knockdown are
-    # solved against where the fighter really is.
+    # Two passes, because a knockdown and the reach solver share one number:
+    # the reach moves the contact, the knockdown hangs off the contact.
+    reach()
     for tr in (red, blue):
         reanchor(tr)
-    reach()
     relax_after()
+    reach()
+    for tr in (red, blue):
+        reanchor(tr)
 
     # ------------------------------------------------------- impact positions
     # the star sits where the attacking limb meets the body it is aimed at
