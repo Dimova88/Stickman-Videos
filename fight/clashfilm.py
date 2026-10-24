@@ -809,7 +809,7 @@ def draw_impacts(cv: Canvas, impacts, t: float, overlay_flash: list,
                 cv.disc((px, py), rr, (250, 246, 238))
 
         # sparks: length decays with age
-        if age < 0.30:
+        if bursts and age < 0.30:
             k = age / 0.30
             rng = np.random.default_rng(int(e["t"] * 977) % 65537)
             base = 0.5 + e["t"] * 1.7

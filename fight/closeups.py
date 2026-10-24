@@ -100,14 +100,19 @@ def _build_ots(w: int, h: int, side: str, colour, blur: float):
     rim = Image.new("RGB", (pw, h), (0, 0, 0))
     rd = ImageDraw.Draw(rim)
     lw = max(8, int(h * 0.042))
-    box = [hx - r * 0.74, hy - r * 1.02, hx + r * 0.78, hy + r * 0.92]
+    # inset by the stroke: a rim drawn on the silhouette edge blends at ~50 %
+    # with the background through the blurred mask and reads as a beige outline
+    # *around* the body instead of light *on* it
+    ins = lw * 0.9
+    box = [hx - r * 0.74 + ins, hy - r * 1.02 + ins,
+           hx + r * 0.78 - ins, hy + r * 0.92 - ins]
     if side == "left":
         rd.arc(box, 292, 62, fill=(255, 214, 168), width=lw)
-        rd.line([(hx + r * 0.40, hy + r * 1.10), (hx + r * 1.25, hy + r * 1.62)],
+        rd.line([(hx + r * 0.40, hy + r * 1.12), (hx + r * 1.20, hy + r * 1.60)],
                 fill=(255, 200, 152), width=lw)
     else:
         rd.arc(box, 118, 248, fill=(255, 214, 168), width=lw)
-        rd.line([(hx - r * 0.40, hy + r * 1.10), (hx - r * 1.25, hy + r * 1.62)],
+        rd.line([(hx - r * 0.40, hy + r * 1.12), (hx - r * 1.20, hy + r * 1.60)],
                 fill=(255, 200, 152), width=lw)
     rim = rim.filter(ImageFilter.GaussianBlur(blur * 1.15))
     patch = Image.fromarray(
