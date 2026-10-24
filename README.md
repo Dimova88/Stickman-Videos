@@ -119,9 +119,10 @@ The reference process, reimplemented end to end:
    impact shake, and a soft vertical/radial vignette is laid over the top. The
    landscape never moves in 3D — only the crop does.
 2. **Figures.** The 10-segment Pivot skeleton from StykAnimate, drawn as flat
-   coloured silhouettes: no outline, solid round-capped limbs, a solid head in
-   the fighter's colour, and a contact shadow that widens and fades while the
-   fighter is airborne. The rig is stretched to the reference stickman's
+   coloured silhouettes: no outline, no joint circles (each limb is a tapered
+   capsule and the joint discs match the bone width, so a knee or an elbow is
+   just a bend in a smooth tube), a solid head in the fighter's colour, and a
+   contact shadow that widens and fades while the fighter is airborne. The rig is stretched to the reference stickman's
    proportions (`ARM_K 1.24`, `LEG_K 1.10`, `HEAD_K 1.42`) so the head reads as
    a head and an extended punch fills the gap between the two fighters.
 3. **Mirroring.** A pose is always solved in a canonical right-facing frame and
@@ -142,11 +143,21 @@ The reference process, reimplemented end to end:
 7. **HUD.** Health bars (damage eased over 0.32 s), a timer, MOUNTAIN CLASH /
    RED VS BLUE / FIGHT! / DOWN! / K.O. / BLUE WINS / VICTORY ON THE SUMMIT,
    MOUNTAIN • ROUND 1, thin cinematic bars and fades.
-8. **Sound.** Fully synthesised at 44.1 kHz stereo: a low pulse bed, kick on the
-   half-second, snare on the off-beats, hats on the sixteenths, whooshes before
-   every strike, low thuds plus filtered noise for hits, a metallic component
-   for blocks, a deeper hit for the finisher, constant-power panning by screen
-   position, and a C–E–G–C major rise after the win.
+8. **Sound.** Fully synthesised at 44.1 kHz stereo, mixed in three layers so the
+   hits cut through:
+   * **hits** are built from their parts — a pitch-dropping body tone (40–130 Hz),
+     a band-passed noise burst for the slap of skin (320–2600 Hz), a 6 ms tick
+     that carries the transient on phone speakers, and a short ring for blocks
+     and clashes. Body shots sit lower and longer, the finisher lower and longer
+     still;
+   * **the bed** (low pulse, kick on the half-second, snare on the off-beats,
+     hats on the sixteenths) is side-chained: every impact ducks it ~8 dB for a
+     moment, which is what makes a punch audible instead of buried;
+   * **movement** adds a swish before each strike, plus the sweeps.
+
+   Constant-power panning by screen position, and a C–E–G–C major rise after the
+   win. Measured on the finished file: peak 0.95, RMS 0.12, and a 2–5x energy
+   jump at every one of the 29 impacts.
 9. **Encode.** 720 frames go straight into FFmpeg as raw RGB (no PNG dump),
    libx264 CRF 18 yuv420p, then the WAV is muxed in as 192 kbps AAC with
    `+faststart`.
