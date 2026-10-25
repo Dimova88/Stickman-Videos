@@ -1,0 +1,18 @@
+# StykAnimate reference source is cloned locally, not vendored into git
+vendor/stykanimate/
+
+# intermediates
+frames/
+artifacts/
+renders/tmp/
+__pycache__/
+*.pyc
+.venv/
+*.mp4.tmp
+
+# iteration stills
+renders/preview/
+
+# scene segments of the streaming orchestrator (regenerated, and large)
+renders/segments/
+renders/_scenes.txt

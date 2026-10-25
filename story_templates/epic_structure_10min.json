@@ -1,0 +1,71 @@
+{
+  "title": "ONE BLADE, THREE MEN — a 10-minute cut",
+  "version": 1,
+  "fps": 24,
+  "width": 1280,
+  "height": 720,
+  "notes": [
+    "Eighteen scenes of ~32 s = 9 min 36 s. Each scene is built by the same engine",
+    "as the 30-second test, so nothing here is a placeholder: swap a 'set' or a",
+    "'title' and you get a different film with the same rhythm.",
+    "Acts follow the classic five: world, escalation, fall, awakening, resolution.",
+    "No narration, no dialogue: every act has to be legible from action alone."
+  ],
+  "acts": [
+    {
+      "id": "act1",
+      "title": "The world and the first meeting",
+      "beat": "Two men, one arena, no words. Establish the ground that will later be broken.",
+      "minutes": "0:00-2:00"
+    },
+    {
+      "id": "act2",
+      "title": "Escalation: the weapon is not reliable",
+      "beat": "Weapons are lost, broken and replaced. First unarmed exchange. The crowd grows.",
+      "minutes": "2:00-4:00"
+    },
+    {
+      "id": "act3",
+      "title": "The fall and the awakening",
+      "beat": "He is beaten down. A Ma hold. Silence. The ground lifts and the power wakes.",
+      "minutes": "4:00-6:00"
+    },
+    {
+      "id": "act4",
+      "title": "Superpowers at scale",
+      "beat": "Flash-steps, lightning, beams, a battlefield that stops being a battlefield.",
+      "minutes": "6:00-8:30"
+    },
+    {
+      "id": "act5",
+      "title": "Resolution",
+      "beat": "Dust settling over the field. The winner, and the cost.",
+      "minutes": "8:30-10:00"
+    }
+  ],
+  "scenes": [
+    {"title": "A: the arena at dawn", "set": "steel-mountain", "act": "act1", "duration_s": 30.2},
+    {"title": "A: the approach", "set": "steel-mountain", "act": "act1", "duration_s": 30.2},
+    {"title": "A: first steel, first blood", "set": "steel-mountain", "act": "act1", "duration_s": 30.2},
+    {"title": "A: the crowd steps out of the trees", "set": "steel-mountain", "act": "act1", "duration_s": 30.2},
+
+    {"title": "B: three against one", "set": "steel-desert", "act": "act2", "duration_s": 30.2},
+    {"title": "B: the blade is taken", "set": "steel-desert", "act": "act2", "duration_s": 30.2},
+    {"title": "B: empty hands, full contact", "set": "steel-desert", "act": "act2", "duration_s": 30.2},
+    {"title": "B: the broken sword", "set": "steel-desert", "act": "act2", "duration_s": 30.2},
+
+    {"title": "C: the ground opens", "set": "steel-mountain", "act": "act3", "duration_s": 30.2},
+    {"title": "C: on his knees", "set": "steel-mountain", "act": "act3", "duration_s": 30.2},
+    {"title": "C: the held breath", "set": "steel-mountain", "act": "act3", "duration_s": 30.2},
+    {"title": "C: awakening", "set": "steel-mountain", "act": "act3", "duration_s": 30.2},
+
+    {"title": "D: flash step", "set": "steel-desert", "act": "act4", "duration_s": 30.2},
+    {"title": "D: the sky fills with stones", "set": "steel-desert", "act": "act4", "duration_s": 30.2},
+    {"title": "D: beam against beam", "set": "steel-desert", "act": "act4", "duration_s": 30.2},
+    {"title": "D: the crater", "set": "steel-desert", "act": "act4", "duration_s": 30.2},
+    {"title": "D: two men left", "set": "steel-mountain", "act": "act4", "duration_s": 30.2},
+
+    {"title": "E: dust, and the cost", "set": "steel-mountain", "act": "act5", "duration_s": 30.2},
+    {"title": "E: the long shot", "set": "steel-mountain", "act": "act5", "duration_s": 30.2}
+  ]
+}

@@ -1,0 +1,422 @@
+"""The camera: a shot list, a follow rig, and a shake with a direction.
+
+Until now there was one camera, and it only existed in the background: the plate
+was cropped with a slow push-in while the fighters were drawn with a *fixed*
+transform. Nothing could whip, punch in, or look at a foot. This module replaces
+it with one transform that both the landscape and the fighters ride:
+
+    screen = centre + (design - camera + shake) * zoom * k
+
+so a shot is just a list of numbers about *where the camera looks* and *how
+tight*, and everything painted — background, shadows, bodies, trails, dust —
+moves together.
+
+A shot is a row in ``SHOTS``:
+
+``anchor``  what the camera is pointed at: the pair (``action``), one fighter,
+            the last impact, or the feet of the downed fighter.
+``zoom``    how tight, and how much it may punch in on a hit.
+``dof``     0 for everything sharp, 1 for a background blurred into bokeh.
+``style``   ``cut`` (hard) or ``whip`` (0.12 s of travel and a smear).
+``dy``      framing bias: negative looks slightly up, positive puts the camera
+            low so the ground fills the frame.
+
+Two more things the reference fight does and this now does too:
+
+*The shake has a direction.* Every impact carries the vector of the blow, so the
+camera kicks along it and only rings perpendicular to it — a punch reads as a
+punch, the finisher as a diagonal slam.
+
+*The follow has lag.* The camera target is a mix of where the action is now and
+where it was a tenth of a second ago, which is what makes a pan feel like an
+operator trying to keep up instead of a rail.
+"""
+from __future__ import annotations
+
+import math
+
+from .clash import DESIGN_H, DESIGN_W, GROUND
+
+WHIP = 0.13           # seconds a whip pan takes
+LAG = 0.10            # how far back the follow looks
+FRAME = 1.0 / 24.0
+
+
+def smooth(u: float) -> float:
+    u = min(1.0, max(0.0, u))
+    return u * u * (3.0 - 2.0 * u)
+
+
+#: the edit. ``t1`` is exclusive; the last shot runs to the end of the film.
+SHOTS = (
+    # establish: the arena, the two fighters walking in
+    dict(t0=0.00, t1=2.40, anchor="action", zoom=1.00, z1=1.05, follow=0.35,
+         dof=0.0, style="cut", ground=0.80),
+    # first exchange: tight and level, the camera works to keep them both in
+    dict(t0=2.40, t1=5.10, anchor="action", zoom=1.14, z1=1.18, follow=1.0,
+         dof=0.10, style="cut", ground=0.79),
+    # up on the ledge, looking down at the ground: you need the whole body to
+    # read a sweep, and the height sells the arena more than a close-up does
+    dict(t0=5.10, t1=6.30, anchor="high", zoom=0.98, z1=1.06, follow=0.6,
+         dof=0.0, style="cut", sqy=0.90, ground=0.84),
+    dict(t0=6.30, t1=7.55, anchor="action", zoom=1.04, follow=0.7,
+         dof=0.0, style="cut", ground=0.80),
+    # the uppercut that drops blue
+    dict(t0=7.55, t1=8.10, anchor="action", zoom=1.26, follow=1.0,
+         dof=0.18, style="whip", ground=0.78, zoom_hit=0.10),
+    # floor level: the body lands, bounces and skids
+    dict(t0=8.10, t1=9.55, anchor="down", zoom=1.52, fg=0.30, follow=1.0,
+         dof=0.30, style="whip", ground=0.74, zoom_hit=0.06),
+    dict(t0=9.55, t1=12.75, anchor="action", zoom=1.12, z1=1.20, follow=1.0,
+         dof=0.10, style="cut", ground=0.79),
+    # the clash of fists at 13.44 gets its own push
+    # over the shoulder: you are standing behind red, watching blue come in
+    dict(t0=12.75, t1=13.44, anchor="action", zoom=1.32, follow=1.0,
+         dof=0.34, style="cut", ground=0.78, zoom_hit=0.10),
+    dict(t0=13.44, t1=13.88, anchor="action", zoom=1.10, follow=1.0,
+         dof=0.0, style="cut", ground=0.80),
+    dict(t0=13.88, t1=15.60, anchor="action", zoom=1.06, follow=0.8,
+         dof=0.05, style="cut", ground=0.80),
+    # the uppercut at 15.80 and red's fall: the camera drops with him
+    dict(t0=15.60, t1=15.80, anchor="rush", rush="blue", zoom=1.16, z1=1.62,
+         follow=1.0, dof=0.0, style="whip", fg=0.25),
+    dict(t0=15.80, t1=16.30, anchor="action", zoom=1.22, follow=1.0,
+         dof=0.15, style="cut", ground=0.72, zoom_hit=0.10),
+    dict(t0=16.30, t1=17.45, anchor="down", zoom=1.42, fg=0.30, follow=1.0,
+         dof=0.28, style="whip", ground=0.73, zoom_hit=0.05),
+    dict(t0=17.45, t1=17.80, anchor="action", zoom=1.10, follow=1.0,
+         dof=0.08, style="cut", ground=0.79),
+    dict(t0=17.80, t1=18.20, anchor="action", zoom=1.30, follow=1.0,
+         dof=0.34, style="cut", ground=0.78, zoom_hit=0.08),
+    dict(t0=18.20, t1=18.95, anchor="action", zoom=1.12, z1=1.16, follow=1.0,
+         dof=0.08, style="cut", ground=0.79),
+    # blue goes down at 18.98
+    dict(t0=18.95, t1=19.30, anchor="action", zoom=1.20, follow=1.0,
+         dof=0.12, style="whip", ground=0.75, zoom_hit=0.08),
+    dict(t0=19.30, t1=20.15, anchor="down", zoom=1.50, fg=0.30, follow=1.0,
+         dof=0.30, style="whip", ground=0.73, zoom_hit=0.05),
+    dict(t0=20.15, t1=20.95, anchor="action", zoom=1.08, z1=1.14, follow=1.0,
+         dof=0.06, style="cut", ground=0.80),
+    dict(t0=20.95, t1=21.40, anchor="action", zoom=1.28, follow=1.0,
+         dof=0.32, style="cut", ground=0.78, zoom_hit=0.08),
+    # up on the ledge again: the floor recedes to the peaks under the pair
+    dict(t0=21.40, t1=22.00, anchor="high", zoom=1.02, z1=1.10, follow=0.7,
+         dof=0.0, style="cut", sqy=0.90, ground=0.84),
+    dict(t0=22.00, t1=23.40, anchor="action", zoom=1.18, z1=1.26, follow=1.0,
+         dof=0.12, style="cut", ground=0.78, zoom_hit=0.07),
+    dict(t0=23.40, t1=24.40, anchor="action", zoom=1.06, follow=0.9,
+         dof=0.0, style="cut", ground=0.80),
+    # a fist at the lens, then the blow lands
+    dict(t0=24.40, t1=24.72, anchor="rush", rush="blue", zoom=1.18, z1=1.70,
+         follow=1.0, dof=0.0, style="cut", fg=0.25, zoom_hit=0.10),
+    # the finisher
+    dict(t0=24.72, t1=25.24, anchor="action", zoom=1.26, follow=1.0,
+         dof=0.20, style="cut", ground=0.76, zoom_hit=0.16),
+    # the pull-back: the winner, and the body on the floor
+    dict(t0=25.24, t1=30.20, anchor="winner", zoom=1.12, z1=1.02, follow=0.6,
+         dof=0.0, style="whip", ground=0.80),
+)
+
+
+def shots_of(scene=None):
+    """The shot list of a scene: the duel's by default, the blade film's own."""
+    return (scene or {}).get("shots") or SHOTS
+
+
+def shot_at(t: float, scene=None) -> dict:
+    shots = shots_of(scene)
+    for s in shots:
+        if s["t0"] <= t < s["t1"]:
+            return s
+    return shots[-1]
+
+
+# --------------------------------------------------------------------- anchors
+def _feet(sk) -> tuple[float, float]:
+    xs = (sk.pts[8][0] + sk.pts[10][0]) * 0.5
+    ys = max(sk.pts[8][1], sk.pts[10][1])
+    return xs, ys
+
+
+def _pair(scene, t: float):
+    """The lead fighter and the opponent nearest to it.
+
+    The duel the film has been built around is two fighters, and that is what
+    this returns for it — but a scene may carry more (the blade film ends one
+    against three), and every anchor below only ever needs "the hero" and "the
+    one he is dealing with".
+    """
+    lead = scene.get("hero") or scene["red"]
+    sa = lead.skel(t)
+    others = [tr for tr in (scene.get("tracks") or (scene["red"], scene["blue"]))
+              if tr is not lead]
+    if not others:
+        return sa, sa
+    other = min(others, key=lambda tr: abs(tr.skel(t).head[0] - sa.head[0]))
+    return sa, other.skel(t)
+
+
+def _fighting_pair(scene, t: float):
+    """The hero and the man the beat sheet says he is fighting."""
+    lead = scene.get("hero") or scene["red"]
+    name = None
+    for t0, t1, who in scene.get("engagements") or ():
+        if t0 <= t <= t1:
+            name = who
+            break
+    tracks = scene.get("tracks") or (scene["red"], scene["blue"])
+    other = next((tr for tr in tracks if tr.name == name), None)
+    if other is None or other is lead:
+        return _pair(scene, t)
+    return lead.skel(t), other.skel(t)
+
+
+def _downed(scene, t: float):
+    """The fighter on the floor, if there is one — the camera follows it down.
+
+    Read from ``scene["tracks"]``, not from two hard-coded names: the second
+    film's cast is not red and blue, and a camera that only knows the first
+    film's cast cannot shoot the second one.
+    """
+    tracks = scene.get("tracks") or (scene["red"], scene["blue"])
+    best = None
+    for tr in tracks:
+        h = tr.sample(t)[0].get("hip", 999.0)
+        if best is None or h < best[1]:
+            best = (tr.name, h, tr)
+    return best
+
+
+def _floor_y(shot, zoom: float) -> float:
+    """Where the camera has to sit for the floor to land at ``ground`` of the
+    frame — the one number that makes a shot read as wide, level or low, and it
+    keeps the framing identical whatever the zoom does."""
+    return GROUND - (shot.get("ground", 0.79) - 0.5) * DESIGN_H / zoom
+
+
+def anchor_point(scene, shot, t: float, zoom: float):
+    kind = shot["anchor"]
+    sa, sb = _pair(scene, t)
+    y = _floor_y(shot, zoom) + shot.get("dy", 0.0)
+    if kind == "rush":
+        # the camera dives at the fist that is about to land, so the hand grows
+        # into the lens because the lens goes to it — no drawn stand-in
+        near = shot["rush"]
+        sk = sa if near == "red" else sb
+        far = (sb if near == "red" else sa).head
+        fist = min((sk.pts[4], sk.pts[6]),
+                   key=lambda p: (p[0] - far[0]) ** 2 + (p[1] - far[1]) ** 2)
+        # frame the fist *and* the head it is about to reach, so the dive reads
+        # as a punch closing in rather than a close-up of a floating hand
+        return (fist[0] * 0.35 + far[0] * 0.65, far[1] + 58.0)
+    if kind == "air":
+        # both men are off the floor: framing them on the ground line cuts their
+        # heads off, so the camera aims at the air between them instead
+        return ((sa.head[0] + sb.head[0]) * 0.5,
+                min(sa.head[1], sb.head[1]) - 66.0 + shot.get("dy", 0.0))
+    if kind == "high":
+        # a raised camera sits above the pair and looks *down* at them, so the
+        # frame is aimed below the heads: the floor fills the bottom and the
+        # peaks stay in shot
+        return ((sa.head[0] + sb.head[0]) * 0.5, GROUND - 62.0)
+    if kind == "down":
+        name, hip, tr = _downed(scene, t)
+        sk = sa if name == "red" else sb
+        # between the chest and the floor: a body on the ground sits low
+        return (sk.head[0] * 0.55 + _feet(sk)[0] * 0.45, y)
+    if kind == "impact":
+        for e in reversed(scene["impacts"]):
+            if e["t"] <= t + 1e-6:
+                return (e["x"], e["y"] + 30.0 + shot.get("dy", 0.0))
+        return ((sa.head[0] + sb.head[0]) * 0.5, y)
+    if kind == "winner":
+        name, hip, tr = _downed(scene, t)
+        win = sb if name == "red" else sa
+        down = sa if name == "red" else sb
+        return (win.head[0] * 0.62 + down.head[0] * 0.38, y)
+    if kind == "field":
+        # the last shot of a fight is not a portrait of the winner: it is the
+        # field. Every body — standing, crawling, thrown — has to be inside the
+        # frame, or the film ends on a cropped corpse.
+        xs, hs = [], []
+        for tr in scene.get("tracks") or (scene["red"], scene["blue"]):
+            s = tr.skel(t)
+            fx, fy = _feet(s)
+            xs += [s.head[0], fx]
+            hs += [s.head[1], fy]
+            xs += [q[0] for q in s.pts.values()]
+            hs += [q[1] for q in s.pts.values()]
+        mid = (min(xs) + max(xs)) * 0.5
+        # centre the *content*: the ground line is not the subject of the last
+        # shot, the men on it are
+        yy = (min(hs) + max(hs)) * 0.5 + 12.0 + shot.get("dy", 0.0)
+        return (mid, yy)
+    # action: the middle of the pair, framed on the floor line
+    return ((sa.head[0] + sb.head[0]) * 0.5, y)
+
+
+#: the follow spring, per shot. The camera is not *attached* to the action, it
+#: is dragged behind it by a spring with mass: a 150 px dash does not pan the
+#: frame, it yanks it — and then the frame overshoots by two percent and settles.
+#: That overshoot is the whole difference between a tripod that slides and an
+#: operator with a shoulder rig.
+_SPRING = {}
+
+
+def _shot_index(scene, shot) -> int:
+    for i, s in enumerate(shots_of(scene)):
+        if s is shot:
+            return i
+    return -1
+
+
+def _spring_x(scene, shot, t: float, base_zoom: float) -> tuple[float, float]:
+    """Frame-by-frame semi-implicit integration of the follow spring.
+
+    It has to be integrated in frame order to be deterministic, so the state is
+    memoised per shot and extended one frame at a time; asking for an earlier
+    frame than the memo reaches rewinds it, which is what the probe tools do.
+    """
+    idx = _shot_index(scene, shot)
+    follow = float(shot.get("follow", 0.0))
+    if idx < 0 or follow <= 0.0:
+        return anchor_point(scene, shot, t, base_zoom)
+    key = (id(scene), idx)
+    n = max(0, int(round((t - shot["t0"]) / FRAME)))
+    st = _SPRING.get(key)
+    if st is not None and n < st["n"]:
+        st = None
+    if st is None:
+        x, y = anchor_point(scene, shot, shot["t0"], base_zoom)
+        st = {"n": 0, "x": x, "y": y, "vx": 0.0, "vy": 0.0}
+        _SPRING[key] = st
+    w = 9.0 * follow                    # stiffness: how hard it chases
+    z = 0.74                            # damping: under 1, so it overshoots once
+    while st["n"] < n:
+        st["n"] += 1
+        tt = shot["t0"] + st["n"] * FRAME
+        tx, ty = anchor_point(scene, shot, tt, base_zoom)
+        st["vx"] += (w * w * (tx - st["x"]) - 2.0 * z * w * st["vx"]) * FRAME
+        st["vy"] += (w * w * (ty - st["y"]) - 2.0 * z * w * st["vy"]) * FRAME
+        st["x"] += st["vx"] * FRAME
+        st["y"] += st["vy"] * FRAME
+    return st["x"], st["y"]
+
+
+def _shot_cam(scene, shot, t: float):
+    """Camera state for one shot: centre, zoom, defocus."""
+    span = max(1e-6, shot["t1"] - shot["t0"])
+    u = smooth((t - shot["t0"]) / span)
+    base = shot["zoom"] + (shot.get("z1", shot["zoom"]) - shot["zoom"]) * u
+    x, y = _spring_x(scene, shot, t, base)
+    zoom = base
+    # a punch-in at every contact inside the shot
+    kick = shot.get("zoom_hit", 0.0)
+    if kick:
+        for e in scene["impacts"]:
+            age = t - e["t"]
+            if 0.0 <= age < 0.34:
+                zoom += kick * e.get("size", 1.0) * math.exp(-age / 0.13)
+    return x, y, zoom, shot.get("dof", 0.0)
+
+
+def camera(scene, t: float, ta: float | None = None) -> dict:
+    """Position, zoom, defocus and directional shake at real time ``t``.
+
+    ``ta`` is the animation clock: the shake rides it, so at the instant of
+    contact the camera is as frozen as the bodies.
+    """
+    ta = t if ta is None else ta
+    shot = shot_at(t, scene)
+    x, y, zoom, dof = _shot_cam(scene, shot, t)
+    if shot["style"] == "whip":
+        prev = None
+        for s in shots_of(scene):
+            if s["t1"] <= t and s is not shot:
+                prev = s
+        if prev is not None and t < shot["t0"] + WHIP:
+            px, py, pz, pd = _shot_cam(scene, prev, prev["t1"] - 1e-4)
+            u = smooth((t - shot["t0"]) / WHIP)
+            x, y, zoom = px + (x - px) * u, py + (y - py) * u, pz + (zoom - pz) * u
+            dof = pd + (dof - pd) * u
+            whip = 1.0 - u
+        else:
+            whip = 0.0
+    else:
+        whip = 0.0
+    # the aerial shot is a *framing*, not a camera position: the highest head
+    # and the floor have to be in the same frame, or the jump has no height to
+    # read against. The lens pulls back just enough to hold both.
+    if shot["anchor"] == "air":
+        # the aerial frame is the two men who are actually in the air, not the
+        # nearest silhouette: a bystander's head must not decide the framing of
+        # a juggle. Both heads and the floor go in the box, and the lens is held
+        # between 0.88 and 1.02 so the jump still has scale.
+        # frame the bodies *as drawn*: during a hit-stop the animation clock is
+        # behind the film clock, and a box built on the film clock crops the very
+        # man the shot exists to show
+        sa, sb = _fighting_pair(scene, ta)
+        top = min(sa.head[1], sb.head[1]) - 96.0
+        # the bottom of the box is the *feet*, not the design ground: a figure is
+        # drawn at its own scale, so the floor line and the soles are not always
+        # the same pixel -- and a jump framed to the floor line still cuts the
+        # legs off the man who did not jump
+        feet = max(max(sk.pts[8][1], sk.pts[10][1]) for sk in (sa, sb))
+        floor = max(GROUND, scene["hero"].ground_y(), feet)
+        x = (sa.head[0] + sb.head[0]) * 0.5
+        y = (top + floor) * 0.5 + shot.get("dy", 0.0)
+        zoom = min(1.02, max(0.88, DESIGN_H * 0.84 / max(200.0, floor - top)))
+    # the floor is the ground the audience stands on: unless the shot is the
+    # aerial one, the lens may not cut the feet off. A tight shot that clips a
+    # fighter's legs at the ankle reads as a mistake, not as a close-up.
+    if shot["anchor"] != "air":
+        ground_here = min((tr.ground_y() if hasattr(tr, "ground_y") else GROUND)
+                          for tr in scene["tracks"])
+        bottom = y + DESIGN_H * 0.5 / zoom
+        if bottom < ground_here + 10.0:
+            y += ground_here + 10.0 - bottom
+    sx, sy = shake(scene["impacts"], ta)
+    return {"x": x, "y": y, "zoom": zoom, "dof": dof, "shake_x": sx,
+            "shake_y": sy, "whip": whip, "shot": shot,
+            "sqy": shot.get("sqy", 1.0),
+            "high": shot["anchor"] == "high",
+            "foreground": shot.get("fg", 0.0 if shot["anchor"] == "high" else 1.0)}
+
+
+# ----------------------------------------------------------------------- shake
+def shake(impacts, t: float):
+    """Directional camera shake: the frame kicks along the force of the blow.
+
+    Each impact carries ``dx`` (+1 if it lands to the right, -1 to the left,
+    0 for a clash straight on). The camera moves along that axis at full
+    amplitude and only rings at 35 % across it, which is what makes a punch feel
+    like a punch and not like a rumble.
+    """
+    sx = sy = 0.0
+    for e in impacts:
+        age = t - e["t"]
+        if not (0.0 <= age < 0.36):
+            continue
+        k = (1.0 - age / 0.36) ** 2
+        amp = (15.0 if e["kind"] == "final" else
+               10.0 if e["kind"] == "clash" else
+               7.0 if e["kind"] == "hit" else 3.4) * e.get("size", 1.0)
+        d = float(e.get("dx", 0.0))
+        along = math.sin(age * 86.0 + e["t"] * 11.0) * amp * k
+        across = math.cos(age * 63.0 + e["t"] * 7.0) * amp * 0.35 * k
+        sx += along * d + across * (1.0 - abs(d))
+        sy += across * abs(d) + along * 0.30 * (1.0 - abs(d))
+        sy -= math.cos(age * 49.0 + e["t"] * 5.0) * amp * 0.30 * k * abs(d)
+    return sx, sy
+
+
+def background_parallax(cam: dict, factor: float = 0.36) -> tuple[float, float]:
+    """Where the plate is cropped: it lags the camera, which is the depth cue.
+
+    Looking straight down there is no distance to lag: the floor is the floor,
+    so a high shot rides the camera one to one.
+    """
+    if cam.get("high"):
+        return cam["x"] + cam["shake_x"], cam["y"] + cam["shake_y"]
+    return (DESIGN_W * 0.5 + (cam["x"] - DESIGN_W * 0.5) * factor + cam["shake_x"],
+            DESIGN_H * 0.5 + (cam["y"] - DESIGN_H * 0.5) * factor * 0.55 + cam["shake_y"])

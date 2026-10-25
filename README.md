@@ -1,1 +1,969 @@
 # Stickman-Videos
+
+Two stick figures, one mountain summit, one fight. Rendered headless from a
+script — no editor, no timeline clicking, no stock assets.
+
+**Watch:**
+
+| file | what it is |
+| --- | --- |
+| [`renders/mountain_clash_720p.mp4`](renders/mountain_clash_720p.mp4) | **Mountains Clash**, 30 s test: 1280×720, 24 fps, HUD, procedural soundtrack |
+| [`renders/desert_clash_720p.mp4`](renders/desert_clash_720p.mp4) | the same fight on the desert plate |
+| [`renders/steel_clash_720p.mp4`](renders/steel_clash_720p.mp4) | **One Blade, Three Men**: katana, 1 vs 3, 30 s, mountain |
+| [`renders/steel_desert_720p.mp4`](renders/steel_desert_720p.mp4) | the blade film on the desert plate |
+| [`renders/duel_night_720p.mp4`](renders/duel_night_720p.mp4) | **The Empty Hand**: one blade against one man at the blue hour, 30 s — script in [`BATTLE_SCRIPT.md`](BATTLE_SCRIPT.md) |
+| [`renders/duel_night_storyboard.jpg`](renders/duel_night_storyboard.jpg) | 24-moment storyboard of the night duel |
+| [`renders/steel_storyboard.jpg`](renders/steel_storyboard.jpg) | 8-moment storyboard of the blade film |
+| [`renders/storyboard.jpg`](renders/storyboard.jpg) | 12-moment storyboard of the duel |
+| [`assets/steel_assets_sheet.png`](assets/steel_assets_sheet.png) | the exported originals: katana, slash crescent, sparks, ink glyphs |
+| [`renders/fight_1080p.mp4`](renders/fight_1080p.mp4) | the earlier clean-background 1080p fight (no HUD) |
+| [`renders/longform_2scenes_360p.mp4`](renders/longform_2scenes_360p.mp4) | **two scenes of the 10-minute cut** (60 s), rendered scene-by-scene by `generate_movie.py` and joined with a stream copy |
+
+
+## Working on it
+
+The rules of the house — the prohibitions, the six pillars of a readable hit,
+and the pre-render checklist — live in **[AGENT_INSTRUCTIONS.md](AGENT_INSTRUCTIONS.md)**.
+Read that before changing a pose, a camera key or a line of the renderer.
+
+
+## What this is
+
+The figures, their proportions, the angle convention and the drawing rules are
+taken from **[StykAnimate](https://github.com/filippocalippo/StykAnimate-App)**
+(GPL-3.0-or-later) — the same 10-segment Pivot skeleton it ships as its default
+"Walker" figure, the same white-filled head with an ink rim, the same round-cap
+limbs. The repository is cloned locally into the (git-ignored)
+`vendor/stykanimate/` folder for reference.
+
+What is new here is the part the app leaves to the mouse: a headless renderer
+with a **written pose library**. Every stance, punch, block, kick and stumble is
+authored once as a small set of body angles, the leg solver turns a foot position
+into hip/knee/ankle angles, and the fight is those poses keyed over time.
+
+## Run it
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install numpy pillow aggdraw imageio-ffmpeg
+
+# Mountains Clash, 30 s, 1280x720 (about 47 s on 2 cores)
+.venv/bin/python tools/render_clash.py --w 1280 --out renders/mountain_clash_720p.mp4
+
+# the blade film: one katana against three (about 39 s on 2 cores)
+.venv/bin/python tools/render_clash.py --set steel-mountain --w 1280 --out renders/steel_clash_720p.mp4
+.venv/bin/python tools/render_clash.py --set steel-desert --w 1280 --out renders/steel_desert_720p.mp4
+
+# re-export the art as standalone transparent PNGs (assets/steel, assets/ink)
+.venv/bin/python tools/make_assets.py
+
+# audit the rig: limb stretch, bodies on the floor, depth-of-field jumps
+.venv/bin/python tools/audit_rig.py --set steel-mountain
+
+# audit the *film*: beat sheet, root motion, crowd stacking, zoom, impact frames
+.venv/bin/python tools/audit_film.py --set steel-mountain
+
+# look at the soundtrack: levels per section, spectra, spectrogram
+.venv/bin/python tools/audio_report.py --set steel-mountain
+
+# replace a master's audio without re-rendering the pixels
+.venv/bin/python tools/remux_audio.py renders/steel_clash_720p.mp4 --set steel-mountain
+
+# 12-moment storyboard, and a fast low-res slice while iterating
+.venv/bin/python tools/render_clash.py --storyboard 12 --w 960
+.venv/bin/python tools/render_clash.py --w 640 --start 18 --end 24 --out /tmp/slice.mp4
+
+# the earlier clean-background fight at 1080p (about 85 s)
+.venv/bin/python tools/render_fight.py --w 1920 --out renders/fight_1080p.mp4
+```
+
+## How it is built
+
+| File | Role |
+| --- | --- |
+| `fight/core.py` | StykAnimate figure definition, forward kinematics, two-bone IK, pose tracks, easings |
+| `fight/draw.py` | aggdraw renderer: round-cap sticks, flat two-tone backdrop, contact shadows |
+| `fight/poses.py` | the pose library: 25 poses (guard, jab, cross, hook, uppercut, kicks, knee, clinch, hit reactions, airborne, tired) |
+| `fight/choreo.py` | the 30 s fight — pose keys + root path per fighter, spacing rules, camera, hit/hurt events |
+| `fight/film.py` | frame loop, impact stars, speed streaks, dust, shake, synthesised audio, MP4 encode |
+| `fight/clash.py` | **Mountains Clash** choreography: keyed poses + 29 impacts + camera + on-screen text |
+| `fight/steel.py` | **One Blade, Three Men**: four tracks, parries, blade locks, the cuts, 17 shots |
+| `fight/steelblade.py` | the katana's geometry, the slash trail and the sparks — all in design units |
+| `fight/blur.py` | the shutter: frame averaging along the camera's own velocity |
+| `fight/vfx.py` | earth, air, blood, the two-frame ink hit, bloom |
+| `fight/insert.py` | *(removed)* the drawn face close-up — a human face built from primitives always read as programmer art |
+| `fight/sound.py` | the whole soundtrack: foley, taiko score, rock, mix |
+| `tools/audio_report.py` | levels per section, spectra, waveform + spectrogram |
+| `tools/remux_audio.py` | swap a master's soundtrack without re-rendering pixels |
+| `tools/make_assets.py` | exports the sword, the crescent, the sparks and the ink as PNGs |
+| `fight/clashfilm.py` | the Mountains Clash renderer: landscape crop, trails, impacts, dust, HUD, procedural audio, FFmpeg pipe |
+| `tools/pose_sheet.py` | renders the whole pose library to one contact sheet — the tool used to check anatomy |
+| `tools/audit_rig.py` | measures the invariants in `AGENT_INSTRUCTIONS.md` on the drawn skeleton: limb length, bodies on the floor, depth-of-field jumps. Exits non-zero so it can gate a render |
+| `tools/audit_film.py` | the film-level gate, all of it as closed ranges: 22-28 beats, 8-13 hero turns, 6-14 rival turns, <= 18 wrong-facing frames, 20-38 px closest contact, <= 24 scrum frames, 210 px perimeter, 3 Ma holds of 10-12 frames, 280-360 px knockbacks, airborne framing, depth lanes, root-motion span, zoom range, ink impact frames. Passing the anatomy check while leaving the old keyframes in place is exactly the shortcut this exists to catch |
+| `assets/mountain_background.png` | 1376×768 painted mountain arena (generated for this project, no third-party art) |
+
+### The choreography, beat by beat
+
+| time | beat |
+| --- | --- |
+| 0 – 2.2 | stand-off, both settle into guard, camera creeps in |
+| 2.5 – 4.4 | red's jab is blocked, red's cross slips past blue's head |
+| 4.6 – 7.0 | blue's body kick lands on red's block, then two quick jabs |
+| 7.3 – 9.0 | blue's hook over the top, red ducks under it and lands an uppercut |
+| 9.3 – 10.9 | clinch, chest to chest, then shoved apart |
+| 11.2 – 12.8 | red's knee, red's hook into blue's guard |
+| 13.2 – 16.2 | blue sweeps low, red jumps it, blue's head kick is ducked, red counters |
+| 16.2 – 18.4 | circling |
+| 18.4 – 21.4 | exchange: jab/counter jab, then a fast 1-2 |
+| 21.4 – 23.4 | both reload, settle, breathe |
+| 23.4 – 25.0 | both throw a cross at the same instant — **fists clash**, both snap back |
+| 25.4 – 27.6 | last exchange, both land a rising blow together |
+| 27.8 – 30.0 | both step back, breathe, fade to black |
+
+### Why the motion reads as human (v3)
+
+The second pass tried to animate *channels* — a hand target per fighter plus a
+footwork simulation. It still looked wrong, because a hand target says nothing
+about where the elbow or the knee is, and the two-bone solver was free to choose
+a sideways knee or a forearm folded into the face.
+
+The current version authors **body angles, not targets**:
+
+* **Feet are given as ground-relative offsets** (±30–34 units fore/aft, plus a
+  height for kicks). A two-bone solve with a *forced forward knee* turns each
+  offset into thigh and shin angles, so a stance always bends the way a stance
+  bends instead of splaying into a diamond.
+* **Hip height comes from the planted foot**, capped at 94 % of full leg
+  extension. That guarantees a visible knee bend without letting the pelvis
+  sink. A lifted foot never carries the hips.
+* **Arms are authored as upper-arm and forearm angles**, clamped to 96 % of the
+  arm's reach. A guard is upper arm ~50°, forearm ~-72°: the fist sits at chin
+  height *in front of* the face, not inside it.
+* **The head is a segment, not a dot.** Its angle follows the spine, so it sits
+  on the neck. This was the single biggest bug in the rejected version: the head
+  circle was drawn one head-radius *forward* of the neck, so every guard read as
+  "fists in the face".
+* **Kicks extend.** A planted leg is solved at 94 % extension, a kicking leg at
+  99.5 % with the foot target 90–110 units from the hip — that is the difference
+  between a kick and a folded leg.
+* **Spacing is enforced, not eyeballed.** The pair is relaxed apart on a 1/10 s
+  grid until the two heads are at least ~176 units apart (~138 in the clinch),
+  with the attacker stepping in for each kick.
+* **Impacts are anchored to the body**, not to empty air: the star is placed on
+  the head or torso the nearest limb is attacking, and on the meeting point of
+  the fists for the two clashes.
+* Audio is synthesised — foley, taiko and rock, all built from envelopes and
+  noise, no samples, so nothing to license. See *The soundtrack*
+  (`fight/sound.py`) below.
+
+## The Clash: how the 30 s test is built
+
+The reference process, reimplemented end to end. The fight is location-agnostic:
+one choreography, one HUD, and a painted plate plus three title lines per set.
+
+| set | plate | title / subtitle / HUD |
+| --- | --- | --- |
+| `mountain` | `assets/mountain_background.png` | MOUNTAIN CLASH / VICTORY ON THE SUMMIT / MOUNTAIN • ROUND 1 |
+| `desert` | `assets/desert_background.png` | DESERT CLASH / VICTORY IN THE DUNES / DESERT • ROUND 1 |
+
+```
+python tools/render_clash.py --out renders/mountain_clash_720p.mp4
+python tools/render_clash.py --set desert --out renders/desert_clash_720p.mp4
+```
+
+1. **Background.** One 1376×768 painted plate per set is scaled to 1320×742, and the
+   push-in is pre-scaled once into 65 plates (one per zoom step, vignette baked
+   in); each frame is then an integer crop of one — or a blend of the two
+   neighbouring — plates, offset by a slow camera drift plus the impact shake.
+   The landscape never moves in 3D — only the crop does.
+2. **Figures.** The 10-segment Pivot skeleton from StykAnimate, drawn as flat
+   coloured silhouettes: no outline, no joint circles (each limb is a tapered
+   capsule and the joint discs match the bone width, so a knee or an elbow is
+   just a bend in a smooth tube), a solid head in the fighter's colour, and a
+   contact shadow that widens and fades while the fighter is airborne. The rig is stretched to the reference stickman's
+   proportions (`ARM_K 1.24`, `LEG_K 1.10`, `HEAD_K 1.42`) so the head reads as
+   a head and an extended punch fills the gap between the two fighters.
+3. **Mirroring.** A pose is always solved in a canonical right-facing frame and
+   the finished body is reflected once about the hips for the left-facing
+   fighter. Reflecting the *solved* figure (not the input angles twice) is what
+   keeps blue's guard, punches and kicks aimed at its opponent.
+4. **Keyframes.** Red faces right, blue faces left; every pose is mirrored for
+   blue. A key is `time · x · pose`, interpolated with smoothstep
+   (`u²·(3−2u)`) on the root, the height and every joint.
+5. **Impacts.** 29 entries, each with instant, screen position, colour, type
+   (`block` / `hit` / `clash` / `final`), intensity and damage. That one list
+   drives body reactions, stars, rings, particles, sparks, camera shake, health
+   bars and the soundtrack — nothing is hand-placed twice.
+6. **Effects.** Trails compare each hand and foot with where it was 0.075 s ago;
+   impacts get a white flash, a radial star, decaying sparks and seeded
+   particles (fixed seeds, so renders are reproducible). Deliberately **no
+   expanding ring and no outlined dots**: a coloured hoop crossing a fighter
+   reads as a circle stuck to its body, and the request was to keep the body
+   clean. 11 dust events throw 14 particles per landing and sweep.
+7. **HUD.** Health bars (damage eased over 0.32 s), a timer, MOUNTAIN CLASH /
+   RED VS BLUE / FIGHT! / DOWN! / K.O. / BLUE WINS / VICTORY ON THE SUMMIT,
+   MOUNTAIN • ROUND 1, thin cinematic bars and fades.
+8. **Sound.** Fully synthesised at 44.1 kHz stereo, in three buses (music,
+   foley, hits) so the impacts cut through. The first version of this was one
+   looped drum and one dry impact for everything; it is now a layered score and
+   a foley pass — see *The soundtrack* (`fight/sound.py`) for how each sound is
+   built and how the music is shaped around the fight.
+
+   Constant-power panning by screen position, and a C–E–G–C major rise after the
+   win. Measured on the finished file: peak 0.95, RMS 0.12, and a 2–5x energy
+   jump at every one of the 29 impacts.
+9. **Encode.** The clip is cut into one contiguous segment per worker; each
+   worker draws *and* encodes its own segment (frames never cross a process
+   pipe) with libx264 `veryfast` / CRF 16 / `-tune animation`, yuv420p. The
+   segments are concatenated with `-c copy`, then the WAV is muxed in as
+   192 kbps AAC with `+faststart`. `--preset/--crf/--tune` override the
+   defaults.
+
+### Turning on the horizontal axis (*fight/rig.py*)
+
+The fighters used to have an integer `facing`, decided when the track was made:
+red looks right, the rivals look left, forever. That works while the choreography
+is one line with a man on each side, and it collapses the moment the fight uses
+the arena — after a side swap the protagonist is drawn looking away from the man
+in front of him, which reads as moonwalking.
+
+`facing_scale` is continuous from +1 to -1, and a turn takes three frames through
+zero. The angle map is `atan2(sin a, facing_scale * cos a)`: at +1 the authored
+pose, at -1 its mirror, in between a body foreshortened through the profile. The
+knee bend comes out right for free, because the chain is solved once in the
+canonical frame and drawn from the other side. The schedule is not authored by
+hand — `rig.drive_facings()` walks the timeline and turns each fighter towards
+the man he is **engaged with** (the beat sheet knows who that is; "nearest" is a
+different and worse answer), with a look-ahead of one turn and a hold time so a
+body thrown overhead does not make the head swivel.
+
+### Five rhythms instead of one (*fight/beats.py*)
+
+The compiler used to give every exchange the same four phases and a recovery
+between each one — sixteen identical single blows from medium range. A beat now
+carries:
+
+* `gap` — the separation it wants at contact. A grapple asks for 20-34 px, the
+  start of a dash 200. `CROWD_GAP = 110` applies **only** to rivals waiting.
+* `chain` — no recovery: five cuts in a row, a barrage rather than five attacks.
+* `launch` / `air` — the defender leaves the floor and the attacker follows him,
+  which is how a juggle gets twelve frames with both men in the air.
+
+The blade film is authored as exchanges: a five-hit flurry, a collar grab into
+an overhead throw, a pincer with a rival on each side, two aerial juggles, two
+matrix weaves, and three grapples — 41 beats, 11 move types, 2 side swaps.
+
+### Depth (*Track.z*)
+
+The plate is painted flat, so depth is staged: a rival in the back lane stands
+26 px higher on the ground and is drawn smaller, one in the near lane lower and
+larger. The crowd is split to both sides of the arena, because a crowd on one
+side is a chorus line — and it is also the reason the hero never had to turn.
+
+### The beat engine (*fight/beats.py*)
+
+A fight is a list of `CombatBeat`s, not a pile of keys. Each beat names the
+attacker, the move, the defender, the outcome, and how far the body travels
+(`lunge`), how high it jumps (`jump`), whether it crosses to the far side
+(`side_swap`) and how hard the defender is thrown (`knock`). `compile_beats()`
+then writes the same four phases for every one of them — coil back, 80 % of the
+distance in two frames, a snapped hold on contact, then recovery — and steps the
+feet through `footwork` because the pelvis moved, not because a key said so.
+
+Two rules live in the compiler that used to be enforced by hand and were
+therefore skipped:
+
+* **the free arm counterweights** every wind-up and follow-through, so no hand
+  ever sits frozen at the chin;
+* **two bodies need their own air** — a beat that closes to 8 px between the
+  pelvises is clamped to `MIN_GAP = 96`, because at 8 px two stickmen are one
+  four-armed creature, and that is what "stacked enemies" looks like from the
+  inside.
+
+The blade film is compiled from **16 beats across 7 move types with 2 side
+swaps and 3 lethal knockdowns**, and `tools/audit_film.py` measures exactly that
+on the built timeline.
+
+### The smear survives the dash (*fight/steelblade.py*)
+
+The old trail was the band between where the tip was and where it is now, in
+world coordinates. Standing still that is a crescent; dashing 200 px it is a
+parallelogram the size of the arena — the "sheet of white paper". Round 6 fixed
+it the wrong way, by switching the trail off whenever the weapon translated,
+which silenced it on precisely the dash and lunge attacks that need it.
+
+`local_crescent()` rebuilds the swing in **local polar space about the current
+hilt**: only the *angle history* is interpolated, both edges are arcs of the same
+circle, and the band widens from a whisker at the tail to a blade-width at the
+head. It is a crescent at any body speed, and a 250 px lunge cannot widen it by
+a pixel. A thrust has no sweep to draw, so `thrust_cone()` gives it a needle of
+compressed air instead — gated on *tip speed*, never on translation.
+
+### The camera is dragged, not attached (*fight/camera.py*)
+
+The follow used to be a linear lag: the frame tracked the action exactly, which
+is what a tripod on a dolly does. It is now a **second-order spring** (ζ = 0.74,
+stiffness scaled by the shot's `follow`), integrated one frame at a time so it is
+deterministic and rewindable by the probe tools: a dash yanks the frame, the
+frame overshoots by about two percent, and settles. The shutter blur is mixed in
+by weight over the first few pixels of travel instead of switching on at a
+threshold, and the directional shake rides the animation clock.
+
+### Beat sheet
+
+| time | beat |
+| --- | --- |
+| 0–2.4 | title, both step in, FIGHT! |
+| 2.6–5.0 | red jabs and crosses, blue slips and counters with a jab-cross that lands |
+| 5.0–7.6 | blue's body kick is blocked, high kick slips past, red sweeps, blue jumps it |
+| 7.6–9.6 | red's uppercut drops blue — DOWN! — blue gets up |
+| 9.6–12.4 | blue's jab-cross, then a flying kick that puts red on the floor |
+| 12.5–16.4 | exchange, fists clash, blue's high kick and sweep, uppercut drops red again |
+| 16.8–19.6 | red's comeback: cross, high kick, aerial kick — blue goes down |
+| 20.2–23.4 | both up, second clash, blue's jab-cross-kick sequence |
+| 23.4–25.4 | blue's aerial kick and the finishing uppercut — K.O. |
+| 25.4–30 | blue's victory pose, BLUE WINS, fade to black |
+
+### Performance
+
+The 30 s test renders in **15–17 s on 2 vCPU**, down from 47–51 s, with the
+picture verified against the previous master rather than assumed:
+
+| stage | before | after | how |
+| --- | --- | --- | --- |
+| one frame | 37.8 ms | 9.1 ms | background plates, bounding-box compositing, cached health curve |
+| 720 frames, 1 core | 27 s | 6.5 s | |
+| encode (720p) | 24.3 s | 10.5 s | `veryfast` + CRF 16 + `-tune animation` |
+| whole render, 2 cores | 47–51 s | 15–17 s | one render+encode process per core, no per-frame IPC |
+
+What was actually hot, and what changed:
+
+* **Background, 14.7 ms → 0.6 ms.** A 1280×720 bilinear resample per frame for
+  the push-in was 11 ms of it; a full-frame `AFFINE` was *worse* (24.7 ms). So
+  the zoom is baked into a ladder of plates at startup (65 × 1320×742 px,
+  ~0.7 s, 190 MB) and a frame crops a window out of two neighbours and blends
+  them. The vignette is baked into the plates too — the camera can drag it by
+  at most the 20×11 px pan margin, which moves the alpha by ~2/255.
+* **Compositing, 8.3 ms → 0.5 ms** per translucent batch. Shadows and dust used
+  to be a full-frame RGBA layer each; they now share one overlay cropped to the
+  bounding box of what is drawn, and the finished crop *becomes* the frame
+  instead of being pasted into a fresh canvas.
+* **Health bars, 1.1 ms → ~0.** The two bars re-integrated the damage curve from
+  t=0 at 120 Hz twice per frame; the integrator now keeps its state between
+  calls, with bit-identical results.
+* **Encode.** At equal quality `veryfast`/CRF 16/`-tune animation` measures the
+  same PSNR as `slow`/CRF 18 (36.92 vs 36.93 dB on a 240-frame lossless
+  reference) in a third of the time, for 17 % more bytes (2.72 vs 2.32 MB per
+  10 s — irrelevant at this length).
+* **Pipeline.** Frames are no longer pickled through the parent: each worker
+  owns a segment and an encoder. The 2 s soundtrack is synthesised in its own
+  process while the frames are drawn instead of afterwards.
+
+Quality, measured:
+
+* Reference frames against the pre-refactor renderer: mean |Δ| 0.6–2.2/255,
+  p99 ≤ 28, and only where a sharp edge in the *photographic* background lands
+  on a different sub-pixel sampling phase. On the fighters and the HUD —
+  everything that is drawn, not resampled — the maximum difference is 16 levels,
+  on antialiased fringes.
+* Sharpness: edge energy of the finished frame is 1.3 % below the old render,
+  i.e. under a quarter of a pixel of softening (a 0.3 px Gaussian measures
+  −1.1 %). Dropping the blend between plate levels would recover it but make the
+  push-in step once a second, which is the worse trade.
+* Finished 30 s master against the previous one: **PSNR 39.3 dB, SSIM 0.980**
+  (chroma 48 dB), and the soundtrack is identical — peak and RMS match to three
+  decimals. The join between the two encoded segments (frame 360) sits inside
+  the normal frame-to-frame spread, so there is no seam.
+
+The same run now also fixes previews: `--w 960/640` used to show an upper-left
+crop of the 1280 background with the HUD type unchanged, so the storyboard had
+its title and health bars running off the frame. Frames are now always composed
+at 1280×720 and the finished frame is resampled, which makes a small size an
+exact preview of the master (`--w 960` differs from the downscaled master by 0
+levels) rather than a second layout.
+
+### Anatomy, rig and deformation
+
+A clean stickman was what made the fight *readable*; it is not what makes it
+cinematic. Four changes close the gap with the hand-drawn reference — and they
+live entirely in the painting of the skeleton, so the IK, the pose table and the
+choreography are untouched and the motion is exactly the motion that was tuned
+before.
+
+| | what it is | where |
+| --- | --- | --- |
+| **articulated spine** | the back is never a straight line. `Pose.spine` bows the trunk through a curve from hip to neck — negative to load a punch and dodge, positive to drive an uppercut, deeply negative for a body shot — and the shoulders ride the tangent so the upper body rotates with it | `core.Pose`, `core.solve` |
+| **feet, hands, thickness** | a foot is a wedge with a heel and a toe, hinged at the ankle, planted flat when the sole is down and pointed when the foot leaves the floor; a fist is a knuckled knob at the end of the forearm, an open hand carries four fingers; arms, forearms, thighs, shins and spine all taper | `clashfilm._foot`, `_hand`, `_tube` |
+| **a face** | a jaw pushed toward the facing direction, a nose notch in profile, and a dark eye socket with a lit amber iris under a brow that slants down toward the nose. The iris blooms with limb speed, the brow steepens with the spine — so anger and pain are geometry, not a new asset | `clashfilm._head` |
+| **squash, stretch, smear** | limb tips stretch along their own velocity, the joints behind them drag the other way, and a fast limb sweeps a tinted fan between where it was and where it is. Under ~300 units/s nothing moves; at 1150 the arm is visibly longer | `clashfilm.draw_fighter`, `trails` |
+
+Two rules keep that rig honest, and both were learned the hard way:
+
+* The floor test is `pose.lift_*` — how far the foot anchor sits *above* its
+  resting height — never the ankle's distance to `GROUND`: posed feet stand
+  30–40 units above the ground line, so an ankle test calls every foot planted.
+* A foot facing left is **mirrored**, never rotated by π: the rotation flips it
+  upside down, which is exactly what blue's raised foot did for one build.
+
+Per-pose tuning (spine bow, toe pitch, grip) lives in one `_TUNE` table that is
+applied to the pose globals themselves, so `PS.GUARD` and `LIBRARY["guard"]`
+cannot drift apart.
+
+Cost and verification: 9.1 → **10.4 ms** per frame on the mountain set (10.0 on
+the desert) and a full 30 s render of **15.2 s** — the anatomy costs about a
+millisecond a frame and nothing else. Against the previous master the finished
+film measures
+**SSIM 0.996**, the sky 44 dB — the background survived the animation change
+untouched — and 32.4 dB overall, which is the fighters: every one of those
+levels is the new anatomy, not an artefact.
+
+### One piece: limbs, feet and hands
+
+The first anatomy pass had a flaw you could see at a glance: the arm and its
+fist, the leg and its foot, were drawn as two shapes that merely *met* at the
+joint. The thin end of one landed against the wide end of the other and left a
+notch — a seam where a body should be continuous.
+
+A limb is now a single swept polygon (`_limb`): down one side of the joint
+chain, around the hand or the foot, and back up the other side. The fist is the
+cap of the arm, the foot is the cap of the leg, and the last width of the chain
+is the first width of the cap, so there is nothing to seam.
+
+The feet were also hovering. The IK could not reach the ground line — the leg
+segments are shorter than the hip height the poses are authored against — so
+every planted foot floated ~30 units above its own shadow. A planted foot now
+puts its **sole** on the floor line, whatever the IK left, and the shin is
+carried down to meet it. It is the silhouette that reads as standing, not the
+joint position.
+
+| before | after |
+| --- | --- |
+| arm + fist as two shapes, notch at the wrist | one polygon, fist is the arm's cap |
+| leg + foot as two shapes, notch at the ankle | one polygon, foot is the leg's cap |
+| sole wherever the IK put the ankle | sole on the floor line when planted |
+| splayed claw for every hand | fist when the pose grips, open hand otherwise |
+| smear fan from the hip | fan from the knee or elbow, and none near the floor |
+
+### The impact register
+
+A stickman reads a fight at a distance; a body blow at full speed does not. The
+film used to cut away for half a second to a close-up of a face drawn out of
+primitives. That is gone: a human face built from an ellipse, a nose wedge and
+two lines always reads as programmer art, and at 16.9 s it was producing a pair
+of googly eyes in the middle of the best hit in the film.
+
+What stops the picture instead is the **ink frame** (`fight/vfx.py`): two frames,
+the real bodies drawn through the real camera with their colours swapped — white
+silhouettes on black, then the same drawing inverted — with radial needles thrown
+off the contact point. Nothing is re-posed, so it cannot drift out of step with
+the fight, and because it is the actual bodies it never looks like a sticker.
+
+**Why it was removed.** Three close-ups shipped: red at 13.44 s, blue taking the
+aerial kick at 18.40 s, and an X-ray of the skull at 24.72 s. The X-ray was the
+best of them and still did not belong in a film about bodies moving; the other
+two read as a cartoon face pasted onto an action beat. They are deleted rather
+than tuned. The ink frame does the same job — stop the world, make the blow the
+only thing in the room — out of the bodies the audience has been watching for
+twenty seconds.
+
+### The blow has weight: hitstop, compression, anticipation (*fight/impact.py*)
+
+A hit is not a fast movement, it is a *stopped* movement. Three timing layers do
+that on top of the existing `time · x · pose` timeline, without re-keying it:
+
+**Hitstop — a clock, not a keyframe.** `Clock` is a piecewise map from real time
+to animation time: for every contact it runs at **0** for 2–4 frames, then at
+**2x** for the same number of frames. The integral of that window is exactly the
+window's length, so after two holds' worth of frames the map is the identity
+again — every later key, cut, title and sound stays exactly where it was
+authored, and the film is still 30.00 s. Frames held: 1 for a block, 2 for a
+landed hit (3 when the hit is a full-strength one), 2 for a clash, 4 for the
+finisher. Measured on the master, the three frames around the 10.94 s kick
+differ by 0.2 / 255 on average (only the impact star develops) while the frame
+before and after it differ by 20 and 9.
+
+The whole painted world rides that clock — bodies, contact shadow, smear,
+dust, the landscape crop and the camera shake — so the instant of contact is
+one held frame. The impact flash and the HUD stay on the real clock, so the
+world freezes while the blow rings out.
+
+**Compression — a pose delta, not a second pose.** At the frozen instant the
+fighter being hit is folded around the fist: `compress(pose, k)` drops the hips
+17 units, caves the spine 11°, pulls the head 7° over the back shoulder and
+drives the guard 12° into the chest, then shoves the body 13 px away from the
+blow. It rises over the last 2.5 frames before contact and decays over 0.17 s
+after, so it is already full on the frame the world freezes on. Because it is a
+delta on top of whatever pose the choreography had, it works for every one of
+the nine landed blows plus the clash, with no authoring.
+
+**Anticipation — the loaded key.** Every landed blow already had a key ~0.26 s
+before it, holding a guard. `add_anticipation` finds that key (never moving it,
+only changing its pose) and coils the limb that is about to strike, chosen from
+the contact pose itself: a punch pulls the elbow back and loads the fist at the
+shoulder, a kick chambers the knee with the heel under the hip; in both cases
+the weight drops 6 units and the body turns 5° away. Ten landed blows plus the
+two clashes re-pose a key on each side, 20 keys in all, and the wind-up adds no
+time to the beat: it only makes the frame that was already there read as a
+load. Because it happens before the spacing and reach
+solvers run, the gap between the pair is still solved against the coiled pose.
+
+### The knockdown: it flies, bounces, skids, and climbs back up (*fight/ragdoll.py*)
+
+The old fall was three keys — hit, `FALL`, `DOWN` — so a fighter was rotated flat
+and then stood back up in guard. There are five knockdowns in the fight and each
+one is now a short arc of seven beats plus a rise:
+
+| | what happens |
+| --- | --- |
+| +0.05 s | the feet leave the floor, body already tipping (`LAUNCH`) |
+| +0.13 s | airborne, turning over, limbs trailing (`FLIGHT`) |
+| +0.21 s | first landing, hips to 27 units, **three dust puffs** (`SLAM`) |
+| +0.27 s | it bounces 15 units back up (`BOUNCE`) |
+| +0.33 s | second landing, two more puffs |
+| +0.40 → 0.52 s | the skid runs out, it settles flat (`SPRAWL`) |
+| then | roll, hands and knees, **the arms give out once**, push up, sway onto the feet, spent |
+
+Two details make it read as weight rather than as a pose change. The contact
+shadow is derived from the feet, so an airborne pose floats its shadow for free.
+And getting up is not a single interpolation: `ROLL → ALL_FOURS → GIVE →
+ALL_FOURS → PUSHUP → STAGGER → SPENT` is seven keys over ~1.1 s, with the chest
+dropping back to the floor on the `GIVE` beat, which is what a hurt body does.
+
+**Where it lands is solved, not keyed.** The throw is a distance, but the spacing
+solvers move the contact position, so the flight keys are placed *after* them
+(`reanchor`): the body lands `throw` pixels from where the blow actually landed,
+and the get-up walks back from there to wherever the next key of the choreography
+is — with a small sway so the rise does not read as a slide. While a fighter is
+down, the gap solvers only push the one still standing, so a thrown body never
+gets nudged sideways while it is lying still (that was the first version, and it
+looked like the floor was a conveyor belt).
+
+Only the body's *times* are authored. Everything about the horizontal path is a
+consequence of the blow, which is why four knockdowns and the finisher all have
+the same weight and only their power differs (34 / 32 / 30 / 36 px, and 55 px for
+the knockout).
+
+### The camera: shots, whip pans and depth (*fight/camera.py*, *fight/layers.py*)
+
+The 30 s test used to be one locked-off wide shot inside an arcade overlay. Both
+of those are gone: **there is no HUD any more** (no bars, no timer, no round
+caption — only the story cards, `FIGHT!`, `DOWN!`, `K.O.`, `BLUE WINS`), and the
+film is cut like a scene rather than watched like a fight on a screen.
+
+**One transform for everything.** Until this pass the camera only existed in the
+background: the plate was cropped with a push-in while the fighters were drawn
+with a fixed transform. Now a single `Cam(x, y, zoom, shake)` drives the plate,
+the bodies, the shadows, the smear and the dust, so a shot is a list of numbers
+about where to look.
+
+**A shot list**, keyed on what the camera is pointed at, not on pixel positions
+(so it survives any choreography change):
+
+| shot | what it is |
+| --- | --- |
+| `action` | the middle of the pair, framed by where the *floor* sits in frame |
+| `down` | follows the fighter on the floor down — floor-level, close |
+| `impact` | the last impact point: the camera arrives on the blow |
+| `winner` | the one still standing, the body in the lower third |
+| `high` | straight down the arena: the rock floor fills the frame, bodies squashed |
+| `rush` | the lens dives at the fist that is about to land |
+
+Framing is expressed as `ground` (where the floor line sits, 0.72 = low camera,
+0.80 = level) instead of a hard-coded height, so a shot reads the same at any
+zoom. 22 shots in 30 s.
+
+**Three angles that needed more than camera numbers:**
+
+* **Raised camera (`high`, 5.1–6.3 s and 21.4–22.0 s).** The first try was a
+  straight-down view: a top-down rock plate, bodies squashed to 70 % vertically.
+  It does not work, and it cannot — the fight is staged in a plane parallel to
+  the lens, so from directly above both fighters would collapse into a *line*,
+  and a side-on body standing on a top-down floor reads as a sticker on a
+  texture. What a raised camera really does is show the ground receding, so the
+  floor plate is now mapped through an inverse-perspective row map (rows near
+  the horizon compressed and widened, rows at the feet stretched and narrowed)
+  and composited under the painted peaks at a 46 % horizon. The squash drops to
+  0.90, which is what 25° above the eyeline actually does to a figure, and the
+  frame is aimed below the heads so the arena fills the bottom of the shot.
+
+* **~~Over the shoulder~~ — built, shown, rejected.** The near fighter was a
+  blurred dark silhouette with a rim light pasted over the frame edge. It was
+  the one element in the film that was not a body: it read as a silhouette in
+  the shot, and no amount of rim light made it a fighter. The three shots that
+  used it (12.75–13.44, 17.8–18.2, 20.95–21.4 s) are now tight lateral shots,
+  and both fighters are always drawn.
+* **Foreshortened punch (`rush`, 15.6–15.8 and 24.4–24.72 s).** A drawn fist
+  rushing the lens was tried three times and read as a blue blob every time —
+  the flat side-on rig has no forearms to foreshorten. What works is the camera
+  doing it instead: the shot starts a hair wide and dives onto the striking
+  fist, aimed 65 % of the way to the head it is about to reach, over five frames.
+  Same effect, and the hand is still the hand the rest of the film is drawn
+  from.
+
+**Whip pans and punch-ins.** A shot marked `whip` flies from the previous
+camera position in 0.13 s and leaves a horizontal smear (the finished frame is
+squashed and blended back over itself, hardest at the start of the move);
+measured on the master, a whip produces three frames of 9/15/13 (out of 255)
+change against a baseline of 1.4. Every contact also punches the lens in — a
+decaying `exp(-t/0.13)` kick of 5–16 % on top of the shot's zoom.
+
+**Directional shake.** Each impact now carries `dx`, the vector of the blow. The
+camera kicks **along** it at full amplitude and rings only 35 % across it, so a
+right hand reads as a right hand and a clash reads as a vertical slam. The shake
+rides the animation clock, so it is frozen with the bodies during the hitstop.
+
+**Depth.** Three things, none of them a 3D engine:
+
+* the plate is cropped **behind** the camera (36 % of its travel): the scenery
+  lags the fighters;
+* a procedurally drawn near layer sits **in front of everything**, travels at
+  175 % of the camera, is never fully opaque and is blurred — it is what turns a
+  pan into a move through space. It is deliberately built out of a few *large*
+  corners: the first version scattered rocks and pines along the bottom edge and
+  the row of small dark bumps read as an audience sitting in the dark, which is
+  the one thing that must never be in frame;
+* close shots carry a `dof` value that blurs the plate into bokeh while the
+  fighters stay sharp, because the lens is on them. It is done by blurring a
+  sixth-size copy and blowing it back up: 2 ms instead of the 24 ms a Gaussian
+  on the full frame costs. The blurred plate is *mixed* back by depth instead
+  of being swapped in at a threshold, so pulling focus is continuous and never
+  snaps from sharp to butter between two frames.
+
+### Air, earth, steel and blood (*fight/vfx.py*)
+
+The star burst was the only effect in the film, and it said "impact" without
+saying "force". Four layers now, all of them geometry:
+
+* **Earth, and it stays.** Craters under every slam and the finish, a dark stain
+  where the last blow put a fighter down, dust puffs wherever a foot *hits* the
+  ground hard (sampled from the same speed the footwork uses, so a running
+  fighter kicks up a trail and a standing one does not). Marks are laid on the
+  floor at the instant they happen and are still there a minute later: laid
+  *before* the bodies, so a fighter stands in the arena rather than on top of
+  the photograph.
+* **Air.** On a clash or a heavy hit an elliptical ring of compressed air snaps
+  out — three strokes of falling alpha and a wash of displaced air, growing on
+  `1-(1-k)^3` so it leaves fast and decelerates. That is what a shockwave does;
+  a hard circle is what a lens flare does.
+* **Drag shadows.** The contact shadow is much darker than it was (62 against
+  44) and now *shrinks* with lift instead of widening, which is the whole cue
+  for "he is off the ground".
+* **Impact frames.** On the heaviest hits — clashes, landed hits of size 0.95
+  and up, the finish — the film cuts for exactly **two frames** to a black page
+  with the two bodies in white ink over calligraphy. The silhouettes are the
+  real ones, drawn through the real camera by the real renderer with the fighter
+  colours swapped for white, so nothing can drift out of step with the fight;
+  the back of every head gets one black slash where the eye is.
+* **Bloom**, gated to the 0.34 s after an impact, on a quarter-size threshold
+  pass (3 ms). The eye aura underneath it is what makes the glow read: the iris
+  now sits inside two soft amber discs, and the bloom lifts them.
+
+Blood stays minimal and matte on purpose: a sprayed red decal at this scale
+reads as litter. What is left is a blurred dark stain that grows in over a
+second where the body came down.
+
+### Feet that step (*fight/footwork.py*)
+
+The choreography moves a fighter by interpolating its `x` between keys, so the
+body used to glide: the feet stayed welded to the same spot on the body while
+the ground streamed past. Now the step cycle is derived from the one thing the
+keys already know — how far the fighter has travelled:
+
+* the cycle advances on **distance**, not on time (`stride` = 56 px + 6 % of the
+  speed), so a foot never skates: a sprint simply takes quicker, longer steps;
+* the swinging foot lifts, travels forward and lands, while the planted one
+  slides back through the stance by exactly the distance the body moved;
+* a deceleration past 520 px/s² puts **both** feet down wide and leans the torso
+  back over the heels — the skid — instead of the fighter freezing mid-slide;
+* a kick or a jump owns its feet: an authored lift above 0.3 is never overruled.
+
+`footwork.apply()` edits the pose dict *before* `to_pose`, so the leg IK still
+does the solve it was tuned against. Path length is integrated with |dx| rather
+than a net displacement, so a fighter who steps back and forth keeps stepping.
+The entrance is now a real run-in: both fighters cover ~120 px at ~130 px/s and
+skid to a stop in front of each other at 1.8 s.
+
+Cost: a frame went from 10.4 ms to 32–40 ms depending on the shot, and the 30 s
+master renders in **24.5 s on 2 vCPU** instead of 24.1 s for the lateral-only
+cut. Measured per angle: wide 33 ms, from above 24 ms (the ground plate needs no
+parallax layer), fist dive 40 ms, over the shoulder 40 ms — the shoulder patch is
+built once per shot (two Gaussian blurs of a 490×720 mask) and then costs a
+single masked paste per frame, which is 17 ms cheaper than rebuilding it.
+### Steel: one blade against three (*fight/steel.py*, *fight/steelblade.py*)
+
+The third film is not a punch-up with props. Four tracks — the red hero and
+three rivals (`blue`, `teal`, `slate`) — and one sword, because three swords in
+one frame read as a thicket of white bars. The rivals carry fists, speed and
+numbers; the hero carries steel.
+
+The blade is geometry, not a sprite, so it can never drift from the hand that
+holds it:
+
+* **the shape.** A 23rd of its length wide at the machi, easing to the yokote,
+  then a short kissaki — a long taper to the point reads as a spear. Everything
+  is authored in *design units* and transformed once, by `Canvas.wp`; the first
+  version mixed screen-pixel widths with design-unit points and drew the swords
+  at font scale.
+* **the read.** A bright edge line on the cutting side, a dark spine on the
+  other, a gold tsuba and three grip bands: four details, and the eye stops
+  seeing a pale stick.
+* **the trail.** The point's own path over the last eighth of a second, drawn as
+  a tapered brush — thick and bright at the blade, a whisker at the tail. It is
+  gated on how far the *point actually travelled*, so a blade that is merely
+  held has no trail, and it always ends exactly where the sword ends. Two
+  earlier attempts are recorded in the commit log: a ribbon between the tip's
+  historical path and an inner arc gave a kite as soon as the fighter stepped,
+  and a fan around the current hand never left the frame when the sword pointed
+  up.
+* **the contact.** Sparks are straight streaks that leave the contact point
+  fast, fall, and fade over 0.45 s — drawn *after* the burst so the steel reads
+  on top of it. A clash burst is deliberately smaller than a fist impact's
+  (11 + 19·size instead of 14 + 25·size) and drops the radial ray lines
+  entirely, because both were swallowing the two blades at the exact frame the
+  audience needs to see them cross.
+
+Sixteen contacts — seven clashes, six landed hits, two blocks and the finish —
+plus eight parry keys and two blade locks arrange the 1 vs 3: the hero is pushed
+left, gives ground, is crowded by a second and a third man, locks blades at
+19.9 s, cuts one down at 16.9 s (an ink frame) and finishes the
+last at 23.3 s. A man on the floor drops his sword — checked against the solved skeleton, not a flag — so
+nothing hangs in the air next to an invisible wrist.
+
+### The shutter (*fight/blur.py*)
+
+The whip pan used to be a smear: the finished frame squashed horizontally and
+blended over itself, which says "the camera moved" the way a badly cut GIF does.
+It is now a real shutter — the frame is averaged over eight positions along the
+camera's own velocity, in 16-bit, on an edge-padded copy, which costs 8 ms
+instead of 24 ms and leaves everything that did not move perfectly sharp.
+
+Two things had to be learned. **Slicing the frame into shifted bands is not the
+same thing**: the whip moves the camera 17 px in a frame while the bodies move
+three, so offset copies land as a ghost band through the middle of the fighters
+— do not go back to that. And the blur is driven by the *camera*, so an authored
+jump in camera state (an anchor that changes target mid-shot) turns into a
+300 px smear on exactly the frame that must be crisp; the blade lock now cuts
+instead of whipping, and its anchor never changes.
+
+### The soundtrack (*fight/sound.py*)
+
+The first soundtrack was a metronome with a film on top: one looping drum, one
+dry impact for every contact, a chord at the end. The current one is built from
+three layers and it knows what is happening on screen, because it is derived
+from the same event list the pictures are.
+
+**Foley — one sound per thing that happens, each made of several layers.**
+
+| what | layers |
+| --- | --- |
+| whoosh | noise through a filter whose centre climbs across four bands, tuned by the weight of the limb — a jab is thin and quick, a kick is low and long, a katana adds a ringing 2.7/4.0/6.1 kHz edge on top |
+| footstep | a soft low thud, a gravel hiss, and three stone ticks at random offsets |
+| flesh hit | sub drop + pitch-dropping body + 40 ms skin crack + a longer meat tail, with a bone ring on blocks; body shots are darker, the finish is lower and longer |
+| steel clash | inharmonic partials at 1, 2.76, 5.40, 8.93 and 13.34 × 640 Hz, a 3–11 kHz sizzle, and a hard clank underneath |
+| blade lock | a friction hiss, two partials beating at 7.5 Hz and a low groan: a lock is not a hit, so it gets its own sound |
+| boom | the air pressure of the biggest hits, 1.4 s of it |
+| breath | a short non-verbal effort exhale — air, a formant and a little glottal buzz, no words |
+
+Footsteps are not scheduled by hand: the footwork module already decides when a
+foot lands, and `_foot_plants` finds the same events from the outside by looking
+for the low point of each foot in the solved rig. A step exists in the sound
+because it exists in the picture.
+
+**Music — a taiko kit and an instrumental rock layer, with a memory.** The drum
+is a skin that drops in pitch (plus a slap and a room); the rock is sawtooth
+power chords pushed through `tanh` and high-passed, with a bass an octave under.
+Every landing gets its own taiko accent, so the score plays the fight instead of
+a click track. The shape:
+
+| | |
+| --- | --- |
+| 0.0–2.1 | intro: three slow drums, a shime roll that tightens, a riser |
+| 2.1–8.1 | quarter-note taiko, rim on the off-beats, bass under the bar |
+| 8.1–16.9 | rock enters, taiko to eighths, shime on the sixteenths |
+| 16.9 | the score **stops** under the ink frame |
+| 17.3–19.4 | the tempo tightens to a roll, riser under it |
+| 19.4–20.4 | **silence**: only the two blades grinding |
+| 20.4–22.7 | double time, full riff, crash on the way in |
+| 22.7–23.3 | **silence** again: the breath before the last blow |
+| 23.3 | the blow, and everything at once |
+| 23.9–25.3 | aftermath: a slow drum and the room |
+| 25.3–30.2 | the key lifts to C major: detuned string pad, taiko phrase, shime roll |
+
+**Mix.** Every sound is panned to where it happened, hits side-chain the music by
+~8 dB, the metal and the booms go through one convolution reverb (a synthetic
+impulse: noise with four early reflections), and the master is tilted rather than
+clipped — a soft limiter, then a band tilt that keeps the drums from sitting on
+top of everything. Measured on the finished steel master: **crest 15.3 dB,
+0.01 % of samples at the ceiling, L/R within 1 dB, and the energy split 13 % /
+28 % / 22 % / 29 % / 8 % across 20–60, 60–120, 120–500, 500–2000 and 2–6 kHz.**
+The steel clash and the flesh hit are provably different sounds: their spectral
+centres of gravity are **4.85 kHz and 0.98 kHz**.
+
+`tools/audio_report.py` prints those numbers and draws `renders/audio_report.png`
+— waveform, log-frequency spectrogram and the section map — so a hole in the
+score is something you can see.
+
+### The assets (*tools/make_assets.py*)
+
+Everything in the film is procedural, so the pieces can be exported on their own
+with an alpha channel and reused in a thumbnail, a title card or the feature:
+
+| file | what it is |
+| --- | --- |
+| `assets/steel/katana.png` | the blade, grip included, 2× design scale |
+| `assets/steel/slash_crescent.png` | the crescent a swing leaves, tapered at both ends |
+| `assets/steel/sparks_strip.png` | six frames of the steel-on-steel burst |
+| `assets/ink/glyph_wall.png` | the calligraphy behind an impact frame |
+| `assets/steel_assets_sheet.png` | all four on one contact sheet |
+
+`python tools/make_assets.py` regenerates them from the same code the film draws
+with, so the assets cannot fall out of step with the picture.
+
+### A second set: the desert
+
+The same fight re-staged on a new plate (`--set desert`), with its own title
+card. Nothing in the renderer is mountain-specific — the plate, the pan range
+and the zoom range are all derived from the scene.
+
+| | mountain | desert |
+| --- | --- | --- |
+| frame (720p, one core) | 20.6 ms | 20.9 ms |
+| full render, 2 cores | 24.1 s | **24.1 s** |
+| encode, same settings | 10.0 s | 10.4 s |
+| master size | 9.28 MB | 12.39 MB |
+| per-frame PSNR vs lossless source | median 47.9 dB | median 46.9 dB |
+| SSIM vs lossless source | 0.981 | 0.976 |
+| soundtrack | — | bit-identical to the mountain master |
+
+The desert plate carries more fine detail (sand grain, rock strata, stars), so
+the same CRF spends 30 % more bits and lands ~1 dB lower — that is the content,
+not the pipeline: dropping to CRF 14 on the desert buys +0.05 dB for +33 % bytes,
+so the setting stays put. Both are ~2.4–3.2 Mbps at 720p.
+
+## Status
+
+30-second tests: the clean 1080p fight, then the Clash on two sets — mountain
+and desert — with the full HUD and soundtrack, both rendered in ~16 s, and the
+figures carrying a bowed spine, articulated feet and hands, speed deformation (no
+face — heads are silhouettes with optional glowing slits), no drawn close-ups,
+hitstop and compression on every contact, a coiled wind-up
+before every landed blow, knockdowns that fly, bounce, skid and climb back up,
+no HUD at all, craters, drag shadows, shockwaves, blood, two-frame ink impact
+frames and a gated bloom, feet that step and skid, a chained grapple (block → clinch →
+knee → throw at 14.9 s), and a 25-shot camera with whip pans, punch-ins, floor-level
+shots, directional shake and a parallax foreground layer — now including the
+two angles that needed new art: a raised camera looking down a receding arena
+floor, and a five-frame dive onto the fist that is about to land.
+
+The weapons round is in: a katana that is geometry rather than a sprite, a slash
+trail sampled from the point's own path, sparks that bounce, blade locks, a
+1-vs-3 film on both sets (`steel_clash_720p.mp4`, `steel_desert_720p.mp4`,
+17 shots), a real directional shutter for the whip pans, and the four art pieces
+exported to `assets/` so they outlive this film.
+
+The rig audit is in: `tools/audit_rig.py` walks every frame of a film and
+measures the invariants instead of trusting them — the longest leg and arm as a
+fraction of their own bones, how fast a body on the floor is still sliding, and
+whether the depth of field ever jumps inside a shot. It found a real one: a
+straight arm was passing at **ratio 1.0000**, because the reach clamp re-aimed
+the forearm at a nearer point, which on a straight arm does nothing. The clamp
+now re-solves the pair as a two-bone chain, so a fully extended arm is 0.96 of
+its bones and always has an elbow.
+
+The visual overhaul round is in as well. Heads are silhouettes — no nose, eye,
+brow or mouth on any frame — with a pair of angular slits that light up only when
+the fighter is actually swinging. The face close-ups are deleted, and the
+comic impact star is replaced by a hot bloom at the contact patch, irregular
+needles and falling debris, with steel-on-steel at a third of the flash so the
+two blades still read as an X inside the light. The knife crime of the first
+version was one of distance, not of drawing: three rivals spent the film
+shoulder to shoulder, so the two who are not attacking now stand in their own
+lanes, bodies on the floor hold a rigid low pose instead of melting into it, and
+the plate is mixed into bokeh by depth instead of snapping in at a threshold.
+
+The sakuga round is the one that matters. The film was not slow because a pose
+was wrong; it was slow because the choreography had never been re-compiled from
+beats — root motion, jumps and side swaps were all missing, and the audit only
+ever measured limbs, so it passed. `fight/beats.py` now owns attack timing
+(16 beats, 7 move types, 2 side swaps, 3 knockdowns through `ragdoll.knockdown`),
+`steelblade.local_crescent` draws the smear in polar space about the current hilt
+so a dash keeps its trail, the camera follows on a spring, and
+`tools/audit_film.py` measures the beat sheet, the root motion, the crowd and the
+zoom range on the built timeline — an anatomy-only pass is no longer a way to
+call this done.
+
+
+### Round 9 — legibility: the count was right and the frame was not
+
+The round-8 film passed every gate and was still unreadable in places: at the
+closest contact the four bodies drew each other's pixels, the protagonist turned
+twenty-six times in thirty seconds, the juggle was filmed with the floor out of
+frame, and forty-one beats left no moment to breathe. Round 9 is a legibility
+pass, and every rule in it is a **closed range** in `tools/audit_film.py` — a
+floor alone invites an overshoot.
+
+* **Turning has hysteresis.** `fight/rig.py` decides on a coarse grid: a 22 px
+  dead band, three frames of confirmation, a 16-frame cool-down (double for
+  rivals) and a ten-frame look-ahead that cancels a turn the fighter would undo
+  in four tenths of a second. A man 180 px *behind* him is turned to at once,
+  because a technically correct schedule that arrives twelve frames late still
+  reads as facing away. Result: **12 hero turns, 12 rival turns, 2-16
+  wrong-facing frames** (the gate is 8-13, 6-14, <= 18).
+* **The body capsule** (`BODY_GAP = 34 px`) is enforced on the *render frame
+  grid*, on drawn coordinates (keys + recoil), for the engaged pair only, and it
+  is re-solved with the turns twice because each depends on the other. Closest
+  pair in the film: **23 px**.
+* **The perimeter.** A rival who is not in the exchange is held 210 px clear of
+  it and dimmed to 78 %: four bodies in one knot was a staging problem, not a
+  drawing problem. 0 frames of a waiting enemy inside the duel.
+* **The casing.** A separate dark under-pass (`#0B0A0E`, ~3 px at 720p) behind
+  every bone. This is the one place the old "no outline" rule is superseded: it
+  is a silhouette separator over a painted plate, drawn *under* the colour. A
+  tinted limb is mud and a coloured rim was rejected on sight.
+* **The aerial shot is a box.** Highest head to the feet, zoom held 0.88-1.02,
+  measured on the *animation* clock so a hit-stop cannot crop the man the shot
+  exists to show. 9/9 airborne frames hold the floor. Every other shot is
+  clamped so the floor line cannot leave the bottom of the frame.
+* **Ma.** 26 beats, **three holds of 12 frames** before the bursts, and eight
+  knockbacks of 280-360 px that clear the frame.
+
+
+### Round 10 — the objects, the powers, and a body that is a chain
+
+Round 9 made the frame legible. Round 10 attacks the four things that still made
+it read as an *animation* rather than as a fight:
+
+* **The sword is no longer welded to the wrist.** `engine/weapons_and_props.py`
+  makes each object a body with an owner or without one: at 12.9 s blue is
+  kicked and his katana leaves his hand, spins and sticks in the dirt; at 14.4 s
+  red's blade **shatters** into four chips and he fights **empty-handed for 118
+  frames** (taijutsu: fists, a knee, a two-handed hammer); at 16.9 s blue draws a
+  second blade; at 19.4 s red **conjures a spear of light**. Five state changes,
+  none of them a swap — each is caused on screen.
+* **The fight stops being a sword fight.** `engine/superpowers.py` adds fractal
+  lightning (midpoint displacement with branches), residual afterimages of the
+  man's own past poses for the 21.0 s flash-step, an awakening aura, stones torn
+  off the floor, and an energy beam with a white core and an impact dome.
+  `engine/destruction_physics.py` puts 8–16 polygonal chips of floor in the air at
+  every slam, with gravity, one bounce and friction.
+* **The body is a chain.** `engine/biomechanics.py` delays the spine and the
+  arms behind the pelvis by one to three frames, scaled by how fast the joint is
+  travelling, with the hip and the elbow always lagging with their own limb so a
+  hinge can never invert, and the lag pulled out on the contact frame so the
+  spark and the fist land together. Damaged bodies now react by **zone** — head
+  snaps the neck, gut folds the spine into a C, sweep takes the feet.
+* **A 10-minute film is possible at all.** `generate_movie.py` renders scene by
+  scene from a manifest (`story_templates/epic_structure_10min.json`: 19 scenes,
+  9 min 34 s, five acts), joins the encoded segments with a stream copy so peak
+  RAM is one scene, and offers `--pipe` for a constant-memory raw path straight
+  into FFmpeg's stdin. `engine/camera_director.py` and
+  `engine/soundtrack_engine.py` plan the lens and the score per act, including
+  the structural silences.
+
+The sound is no longer a loop: layered foley (whooshes tuned by limb weight,
+dirt footsteps read off the rig, flesh with sub drops, inharmonic steel, sonic
+booms, non-verbal breath), a taiko-and-rock score that hits on every landing and
+**stops dead** for the blade lock and for the breath before the last blow, and a
+mix with panning, a convolution reverb, side-chain ducking and a limiter. Next:
+the first minute of the long film, with the blade vocabulary and this score
+engine reused across sets.
