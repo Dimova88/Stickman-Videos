@@ -140,6 +140,71 @@ a completion criterion.
    times as large, and the waiting rivals stand on different lanes. Four men on
    one horizontal line is a chorus line, not a fight.
 
+## FASE 7 — LEGIBILITY: THE RULES ROUND 9 ADDED
+
+Round 8 passed every count and still looked wrong: four bodies in one knot, a
+protagonist who turned twenty-six times in thirty seconds, a jump filmed with
+the floor out of frame, and a fight with no held breath in it. The counts were
+right and the film was not. These are the rules that closed that gap, and every
+one of them is enforced as a **closed range** in `tools/audit_film.py` (a floor
+alone is an invitation to overshoot).
+
+1. **TURNING HAS HYSTERESIS, NOT A DEADBAND ALONE.** `fight/rig.py`:
+   - `TURN_DEADZONE = 22 px` — two men holding each other are not "crossing".
+   - `confirm = 3` frames — the new side has to still be the new side an eighth
+     of a second later.
+   - `MIN_FRAMES_BETWEEN_TURNS = 16` for the hero, **twice** that for rivals: a
+     waiting enemy holding his stance is not a weathervane.
+   - a **10-frame look-ahead**: if he will want the old side back inside four
+     tenths of a second, the turn is not made at all. Three flips at 7.0 / 7.5 /
+     7.9 s become one.
+   - `urgent = 180 px` — a man *behind* him is turned to at once, because a
+     correct schedule that is twelve frames late still reads as facing away.
+   Target: **8-13 hero turns, 6-14 rival turns, <= 18 wrong-facing frames**.
+   The 45-frame relaxation of round 8 is gone and must not come back.
+
+2. **THE BODY CAPSULE.** The engaged pair never close below
+   `BODY_GAP = 34 px` of pelvis. The gap must be measured on **drawn**
+   coordinates (keys + `push_at` along `facing_at`) and enforced on the **render
+   frame grid** (`f / 24.0`): a key inserted at 12.583 is interpolated at frame
+   12.542 and the gap collapses. Turns and capsule are mutually dependent, so:
+   `solve_perimeter -> (turns -> capsule) x 2`.
+
+3. **DEPTH IS A PAINTER'S SORT, NOT A DECORATION.** `Track.z` gives the lane,
+   `CLASH_PLANE = 120` snaps the engaged pair onto the hero's plane (+-0.16) so
+   blades meet in the same depth, everything else is drawn back-to-front by
+   `z_now`. Waiting rivals are dimmed to `WAITING_DIM = 0.78` and held
+   **>= 210 px** from the duel while they wait (`solve_perimeter()`; a man
+   *walking in* may cross the perimeter, a man *standing* may not).
+
+4. **A DARK CASING BEHIND EVERY BONE.** `OUTLINE = (14, 12, 18)` drawn as a
+   **separate under-pass** (`_casing_pass`), ~3 px at 720p
+   (`3.0 * w / 1280`). This supersedes the old "no outline" rule: it is a
+   silhouette separator against a painted plate, not a sticker edge. Tinting a
+   limb dark instead is mud; a coloured rim is rejected.
+
+5. **THE AERIAL SHOT IS A BOX, NOT A POSITION.** During `aerial_juggle` the
+   camera frames **highest head -> feet/ground** and holds **zoom 0.88-1.02**,
+   so the floor is always in shot and the jump has height to read against. The
+   box is measured on the **animation clock** (`ta`), not the film clock: during
+   a hit-stop the bodies are behind the film and a box built on `t` crops the man
+   the shot exists to show. Every non-air shot is clamped so the floor line
+   cannot fall off the bottom of the frame.
+
+6. **MA (間) — THE HELD BREATH.** **22-28 beats**, and **three** dramatic holds
+   of **10-12 frames** before the bursts, with no beat landing inside a hold.
+   The beat sheet owns them: `MA` in `fight/steel.py`, `scene["ma"]`.
+
+7. **KNOCKBACKS CLEAR THE FRAME.** The hard ones are **280-360 px** (at least
+   five of them); a knockback over 360 throws the body out of the shot and the
+   fight loses its geography.
+
+8. **THE AUDIT EXITS 1.** `tools/audit_film.py` gates every rule above as
+   `MIN <= x <= MAX` and returns non-zero on any failure. A film that "mostly"
+   passes is a failed film.
+
+---
+
 ## PHASE 4: PRE-RENDER SELF-AUDIT CHECKLIST
 
 Before finalizing any video generation, verify the following invariants in your code:
@@ -155,7 +220,11 @@ Before finalizing any video generation, verify the following invariants in your 
 - [ ] Does the protagonist turn at least 6 times, and do the rivals flank him from both sides?
 - [ ] Is there at least one exchange with no recovery between the blows?
 - [ ] Is there at least one sequence with **both** fighters off the floor?
-- [ ] Does the pair ever get closer than 42 px (a grapple), and never stack in waiting lanes?
+- [ ] Does the pair ever get closer than 42 px (a grapple), never below 20 px, and never stack in waiting lanes?
+- [ ] Are there **8-13** hero turns and **6-14** rival turns, with at most 18 wrong-facing frames?
+- [ ] Is every bone cased by the dark under-pass, and is every waiting rival 210 px clear and dimmed?
+- [ ] Do the aerial frames hold the floor in shot at zoom 0.88-1.02?
+- [ ] Are there 22-28 beats with three 10-12 frame Ma holds, and five knockbacks of 280-360 px?
 
 ---
 
@@ -175,6 +244,11 @@ constraint, never the file.
 | The horizontal axis | `fight/rig.py` (`facing_scale`, `mirror_angle`, `drive_facings`), `Track.facing_keys` in `fight/clash.py`, applied by `poses.to_pose()` |
 | Exchange patterns | `fight/beats.py` - `gap`, `chain`, `launch`, `air` on `CombatBeat`; the flurry / pincer / juggle / grapple / weave beats in `fight/steel.py` |
 | Depth lanes | `Track.z` -> `Track.ground_y()` and the drawn scale in `clashfilm.pose_of()` |
+| Turn hysteresis | `fight/rig.py` — `build_facing_schedule()` (dead band, confirm, cool-down, look-ahead, urgency) |
+| Body capsule | `fight/beats.py` `BODY_GAP` + `steel.solve_capsule()` on the render frame grid |
+| Perimeter | `fight/steel.py` — `solve_perimeter()` (waiting rivals held 210 px out) |
+| Silhouette casing | `fight/clashfilm.py` — `OUTLINE`, `_casing_pass`, `_case_w()` |
+| Aerial framing | `fight/camera.py` — `_fighting_pair()`, the `air` box on the animation clock |
 | Beat sheet | `fight/beats.py` — `CombatBeat`, `PRESETS`, `compile_beats()`; authored in `fight/steel.py`, measured by `tools/audit_film.py` |
 | Smear arcs | `fight/steelblade.py` — `local_crescent()` (the swing rebuilt in polar space about the **current** hilt: a crescent at any body speed) and `thrust_cone()` |
 | 2-frame impact frames | `fight/vfx.py` — `impact_frame_index()` decides, `impact_frame()` draws the inverted silhouettes plus 24 radial spikes |

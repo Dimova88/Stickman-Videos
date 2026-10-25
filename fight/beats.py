@@ -254,6 +254,13 @@ def _ease_back(x: float, d: float) -> float:
     return x - math.copysign(d, 1.0)
 
 
+#: The bodies are capsules, not points. Two pelvis coordinates closer than this
+#: draw two torsos and two heads in the same pixels, which is the "scrum" — so
+#: the engaged pair is held at a shoulder's width whatever the beat asks for.
+#: The single exception is a coreographed side swap, where one man passes the
+#: other, and even then only for the frames he is actually crossing.
+BODY_GAP = 34.0
+
 #: how far apart two *waiting* rivals are held, in design px. This is a crowd
 #: rule, not a combat rule: applying it to the pair that is actually fighting is
 #: what made every attack a poke from medium range.
@@ -284,6 +291,11 @@ def compile_beats(beats, tracks, *, guard, on_impact=None, on_dust=None,
     """
     from .poses import DOWN
 
+    #: windows in which a body is being *held* in the air by a juggle. Inside
+    #: one of these every key that touches him inherits the lift, or the next
+    #: beat's idle guard quietly drops him back to the floor between two hits.
+    float_windows: dict[str, list[tuple[float, float, float]]] = {}
+
     for b in sorted(beats, key=lambda q: q.t):
         pre = PRESETS[b.move]
         atk = tracks[b.attacker]
@@ -304,12 +316,13 @@ def compile_beats(beats, tracks, *, guard, on_impact=None, on_dust=None,
         dx = None
         if dfd is not None:
             dx = b.defender_x if b.defender_x is not None else dfd.sample(t0)[1]
-            if b.gap is not None:
+            g = max(BODY_GAP, b.gap) if b.gap is not None else None
+            if g is not None:
                 side = 1.0 if dx >= start else -1.0
                 if b.side_swap:
-                    end = dx + side * b.gap        # through him, out the far side
+                    end = dx + side * g            # through him, out the far side
                 else:
-                    dx = end + (1.0 if dx >= end else -1.0) * b.gap
+                    dx = end + (1.0 if dx >= end else -1.0) * g
             elif b.side_swap:
                 end = dx + (1.0 if dx >= start else -1.0) * b.gap_or(80.0)
 
@@ -336,21 +349,36 @@ def compile_beats(beats, tracks, *, guard, on_impact=None, on_dust=None,
         if dfd is not None:
             fx = b.defender_end_x
             if fx is None:
-                fx = dx + dfd.facing * b.knock
+                # knocked *away from the man who hit him*, by geometry: using
+                # the defender's built-in facing sent bodies flying back through
+                # the attacker when the fight had already changed sides
+                away = 1.0 if dx >= end else -1.0
+                fx = dx + away * b.knock
             else:
                 fx = max(dx - 320.0, min(dx + 320.0, fx))
-            dfd.key(t0, dict(guard), dx, "out")
+            def dkey(t, pose, x, mode):
+                """Key the defender, keeping whatever juggle is holding him up."""
+                for w0, w1, wa in float_windows.get(dfd.name, ()):
+                    if w0 - 1e-6 <= t <= w1 + 1e-6:
+                        pose = dict(pose)
+                        pose["air"] = max(float(pose.get("air", 0.0)), wa)
+                        break
+                dfd.key(t, pose, x, mode)
+
+            dkey(t0, dict(guard), dx, "out")
             defd = dict(pre["defend"])
             if b.launch:
                 defd["air"] = float(b.launch)
-            dfd.key(t_hit, defd, dx, "snap")
+            dkey(t_hit, defd, dx, "snap")
             if b.launch:
                 # held in the air for the juggle: two more beats happen while
                 # this body is off the floor, and it must not fall back down
                 air_pose = dict(pre["defend"])
                 air_pose["air"] = float(b.launch)
-                dfd.key(t_hit + max(0.10, b.hold_air), air_pose, dx + dfd.facing * 12.0,
-                        "smooth")
+                dkey(t_hit + max(0.10, b.hold_air), air_pose, dx + dfd.facing * 12.0,
+                     "smooth")
+                float_windows.setdefault(dfd.name, []).append(
+                    (t_hit, t_hit + max(0.10, b.hold_air), float(b.launch)))
             if b.outcome in ("lethal", "down"):
                 # the ragdoll owns this window: anything already keyed inside it
                 # (a recovery from the previous beat, a later wind-up) fights the
@@ -379,11 +407,13 @@ def compile_beats(beats, tracks, *, guard, on_impact=None, on_dust=None,
                                dust=(lambda tt: on_dust(tt)) if on_dust else None,
                                stay=False)
             elif b.chain:
-                dfd.key(t_hit + 0.09, dict(pre["defend"]),
-                        dx + dfd.facing * b.knock * 0.25, "smooth")
+                away = 1.0 if dx >= end else -1.0
+                dkey(t_hit + 0.09, dict(pre["defend"]),
+                     dx + away * b.knock * 0.25, "smooth")
             else:
-                dfd.key(t_hit + 0.16, fade(pre["defend"], spine=-4.0),
-                        dx + dfd.facing * b.knock * 0.45, "out")
+                away = 1.0 if dx >= end else -1.0
+                dkey(t_hit + 0.16, fade(pre["defend"], spine=-4.0),
+                     dx + away * b.knock * 0.45, "out")
                 dfd.key(t_hit + 0.60, dict(guard), fx, "out")
 
         # --- everybody else holds his lane --------------------------------

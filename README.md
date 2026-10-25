@@ -96,7 +96,7 @@ python3 -m venv .venv
 | `fight/clashfilm.py` | the Mountains Clash renderer: landscape crop, trails, impacts, dust, HUD, procedural audio, FFmpeg pipe |
 | `tools/pose_sheet.py` | renders the whole pose library to one contact sheet — the tool used to check anatomy |
 | `tools/audit_rig.py` | measures the invariants in `AGENT_INSTRUCTIONS.md` on the drawn skeleton: limb length, bodies on the floor, depth-of-field jumps. Exits non-zero so it can gate a render |
-| `tools/audit_film.py` | the film-level gate: number of beats and move types, side swaps, root-motion span, frames with stacked heads, zoom range, ink impact frames. Passing the anatomy check while leaving the old keyframes in place is exactly the shortcut this exists to catch |
+| `tools/audit_film.py` | the film-level gate, all of it as closed ranges: 22-28 beats, 8-13 hero turns, 6-14 rival turns, <= 18 wrong-facing frames, 20-38 px closest contact, <= 24 scrum frames, 210 px perimeter, 3 Ma holds of 10-12 frames, 280-360 px knockbacks, airborne framing, depth lanes, root-motion span, zoom range, ink impact frames. Passing the anatomy check while leaving the old keyframes in place is exactly the shortcut this exists to catch |
 | `assets/mountain_background.png` | 1376×768 painted mountain arena (generated for this project, no third-party art) |
 
 ### The choreography, beat by beat
@@ -888,6 +888,41 @@ so a dash keeps its trail, the camera follows on a spring, and
 `tools/audit_film.py` measures the beat sheet, the root motion, the crowd and the
 zoom range on the built timeline — an anatomy-only pass is no longer a way to
 call this done.
+
+
+### Round 9 — legibility: the count was right and the frame was not
+
+The round-8 film passed every gate and was still unreadable in places: at the
+closest contact the four bodies drew each other's pixels, the protagonist turned
+twenty-six times in thirty seconds, the juggle was filmed with the floor out of
+frame, and forty-one beats left no moment to breathe. Round 9 is a legibility
+pass, and every rule in it is a **closed range** in `tools/audit_film.py` — a
+floor alone invites an overshoot.
+
+* **Turning has hysteresis.** `fight/rig.py` decides on a coarse grid: a 22 px
+  dead band, three frames of confirmation, a 16-frame cool-down (double for
+  rivals) and a ten-frame look-ahead that cancels a turn the fighter would undo
+  in four tenths of a second. A man 180 px *behind* him is turned to at once,
+  because a technically correct schedule that arrives twelve frames late still
+  reads as facing away. Result: **12 hero turns, 12 rival turns, 2-16
+  wrong-facing frames** (the gate is 8-13, 6-14, <= 18).
+* **The body capsule** (`BODY_GAP = 34 px`) is enforced on the *render frame
+  grid*, on drawn coordinates (keys + recoil), for the engaged pair only, and it
+  is re-solved with the turns twice because each depends on the other. Closest
+  pair in the film: **23 px**.
+* **The perimeter.** A rival who is not in the exchange is held 210 px clear of
+  it and dimmed to 78 %: four bodies in one knot was a staging problem, not a
+  drawing problem. 0 frames of a waiting enemy inside the duel.
+* **The casing.** A separate dark under-pass (`#0B0A0E`, ~3 px at 720p) behind
+  every bone. This is the one place the old "no outline" rule is superseded: it
+  is a silhouette separator over a painted plate, drawn *under* the colour. A
+  tinted limb is mud and a coloured rim was rejected on sight.
+* **The aerial shot is a box.** Highest head to the feet, zoom held 0.88-1.02,
+  measured on the *animation* clock so a hit-stop cannot crop the man the shot
+  exists to show. 9/9 airborne frames hold the floor. Every other shot is
+  clamped so the floor line cannot leave the bottom of the frame.
+* **Ma.** 26 beats, **three holds of 12 frames** before the bursts, and eight
+  knockbacks of 280-360 px that clear the frame.
 
 The sound is no longer a loop: layered foley (whooshes tuned by limb weight,
 dirt footsteps read off the rig, flesh with sub drops, inharmonic steel, sonic

@@ -394,6 +394,10 @@ def _capsule(cv: Canvas, a, b, w0: float, w1: float, colour, alpha: int = 255) -
 
 def _tube(cv: Canvas, pts, widths, colour, alpha: int = 255) -> None:
     """Draw a chain as one smooth tube: capsule per span, disc at every joint."""
+    if _casing(cv):
+        colour = OUTLINE
+        cw = _case_w(cv)
+        widths = [w + cw for w in widths]
     for i in range(len(pts) - 1):
         _capsule(cv, pts[i], pts[i + 1], widths[i], widths[i + 1], colour, alpha)
 
@@ -455,6 +459,20 @@ def _lerp(p, q, f):
     return (p[0] + (q[0] - p[0]) * f, p[1] + (q[1] - p[1]) * f)
 
 
+#: the dark casing that keeps two bodies legible where they overlap. Three
+#: pixels at 720p: enough to separate a red forearm from a blue one in a collar
+#: grab, not enough to read as a cartoon sticker outline.
+OUTLINE = (14, 12, 18)
+
+
+def _casing(cv) -> bool:
+    return bool(getattr(cv, "_casing", False))
+
+
+def _case_w(cv) -> float:
+    return 3.0 * (cv.w / 1280.0)
+
+
 def _limb(cv: Canvas, pts, widths, colour, cap=None, alpha: int = 255) -> tuple:
     """A whole limb as ONE polygon: the chain, then the hand or the foot.
 
@@ -467,6 +485,10 @@ def _limb(cv: Canvas, pts, widths, colour, cap=None, alpha: int = 255) -> tuple:
     Returns the points actually drawn, so the caller can hang details off them.
     """
     n = len(pts)
+    if _casing(cv):
+        colour = OUTLINE
+        cw = _case_w(cv)
+        widths = [w + cw for w in widths]
     left, right = [], []
     for i in range(n):
         if i == 0:
@@ -558,6 +580,9 @@ def _head(cv: Canvas, c, r: float, facing: int, colour, dark, u: float,
     state (a swing, a parry, a killing blow) and are gone the rest of the time.
     """
     fx = facing
+    if _casing(cv):
+        colour = OUTLINE
+        r += _case_w(cv) * 0.5
     cv.circle(c, r, colour, width=0, fill=colour)
     # the jaw: still a silhouette, but it gives the ball a direction
     cv.circle((c[0] + fx * r * 0.17, c[1] + r * 0.34), r * 0.60, colour,
@@ -614,7 +639,7 @@ def pose_of(track, t: float, squash: float = 0.0, push: float = 0.0):
     if squash > 0.002:
         p = compress(p, squash)
     return to_pose(p, x + push, track.ground_y(), facing=track.facing_at(t),
-                   scale=FIG_SCALE * (1.0 + 0.08 * getattr(track, "z", 0.0)),
+                   scale=FIG_SCALE * (1.0 + 0.08 * track.ground_z()),
                    widen=STANCE)
 
 
@@ -628,19 +653,32 @@ def body(track, t: float, squash: float = 0.0, push: float = 0.0):
     return solve(pose_of(track, t, squash, push))
 
 
-def draw_fighter(cv: Canvas, track, t: float) -> None:
+def draw_fighter(cv: Canvas, track, t: float, _casing_pass: bool = False) -> None:
     """The body: bowed spine, tapered limbs, feet on the floor, hands, face.
 
     The skeleton still comes from the same IK solve the choreography was written
     against — the anatomy only changes how that skeleton is painted, plus the
     speed-driven deformation (stretch along the swing, joints trailing behind).
     """
+    if not _casing_pass and OUTLINE_ON:
+        # the casing: the whole silhouette once, fat and dark, *under* the
+        # colour. Without it a red forearm crossing a blue one in a collar grab
+        # is one magenta arm, which is exactly the "scrum" the film was showing.
+        prev = getattr(cv, "_casing", False)
+        cv._casing = True
+        draw_fighter(cv, track, t, _casing_pass=True)
+        cv._casing = prev
     squash = getattr(track, "_squash", 0.0)
     push = getattr(track, "_push", 0.0)
     pose = pose_of(track, t, squash, push)
     sk = solve(pose)
     u = cv.unit() * pose.scale
-    colour, dark = track.colour, track.dark
+
+    # depth dimming: a rival waiting his turn is a body in shadow, so the duel
+    # reads first. It is a mix towards the casing colour, not an opacity: a
+    # half-transparent stickman over a painted mountain is mud.
+    dim = 1.0 if _casing_pass else getattr(track, "_dim", 1.0)
+    colour, dark = _shade(track.colour, dim), _shade(track.dark, dim)
     g = GROUND
 
     then = body(track, max(0.0, t - 0.05), squash, push) if t > 0.06 else sk
@@ -755,6 +793,67 @@ def draw_fighter(cv: Canvas, track, t: float) -> None:
           glow, hurt)
 
 
+#: below this separation the engaged pair share the fighting plane, so their
+#: blades meet in the same depth; above it the depth lanes come back and the
+#: two silhouettes are separated by size and dimming instead
+CLASH_PLANE = 120.0
+
+
+def _lane_with(scene, track, t: float, engaged) -> float:
+    """The lane a fighter is drawn in.
+
+    The engaged pair share a *plane*, not a coordinate: they keep the hero's own
+    lane and close the offset between them, so the duel is still drawn with one
+    body nearer the lens — and their blades still meet in the same depth. A rival
+    waiting his turn keeps his own lane.
+    """
+    hero = scene.get("hero") or scene["tracks"][0]
+    base = float(getattr(hero, "z", 0.0))
+    if engaged is not None and track.name in ("red", engaged):
+        if _track_resolution(scene, t) <= CLASH_PLANE:
+            return base
+        other = 1.0 if track is hero else -1.0
+        return base + other * 0.16
+    return getattr(track, "z", 0.0)
+
+
+def _track_resolution(scene, t: float) -> float:
+    from .rig import active_opponent as _rig_active
+    """How deep the two bodies are stacked over the last tenth of a second.
+
+    A grapple is meant to be *close*, but two bodies at the same depth for
+    twenty frames is one body with eight limbs. The lanes are only collapsed
+    while the pair is actually crossing, so the depth that separates them comes
+    back the moment the exchange widens.
+    """
+    hero = scene.get("hero") or scene["tracks"][0]
+    best = 99.0
+    for k in range(7):
+        tt = t - 0.10 + k * (0.10 / 6.0)
+        engaged = _rig_active(scene, tt)
+        if engaged is None:
+            continue
+        other = next((tr for tr in scene["tracks"] if tr.name == engaged), None)
+        if other is None:
+            continue
+        best = min(best, abs(other.sample(tt)[1] - hero.sample(tt)[1]))
+    return best
+
+
+#: draw order: the painter's algorithm, back to front
+OUTLINE_ON = True
+#: how much of its colour a rival *waiting* in the back loses, so the duel owns
+#: the eye. 1.0 would be a full-lit fighter; 0.66 is a body in shadow.
+WAITING_DIM = 0.78
+
+
+def _shade(colour, k: float, towards=OUTLINE) -> tuple:
+    """Mix a colour towards the dark: depth dimming without a lighting model."""
+    if k >= 0.999:
+        return colour
+    return tuple(int(c * k + t * (1.0 - k)) for c, t in zip(colour[:3], towards))
+
+
 def _lighten(colour, f: float):
     return tuple(int(c + (255 - c) * f) for c in colour[:3])
 
@@ -771,7 +870,7 @@ def trails(cv: Canvas, track, t: float, dt: float = 0.075) -> None:
     now = track.skel(t)
     then = track.skel(t - dt)
     u = cv.unit() * now.scale
-    tint = _lighten(track.colour, 0.40)
+    tint = _lighten(_shade(track.colour, getattr(track, "_dim", 1.0)), 0.40)
     # a smear painted at 1.5x zoom covers 2.25x the area and reads as a pane of
     # glass: keep its opacity in step with how tight the shot is
     thin = min(1.0, 1.0 / max(1.0, cv.cam.zoom) ** 1.3)
@@ -1158,11 +1257,25 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
     tracks = scene.get("tracks") or [scene["red"], scene["blue"]]
     for tr in tracks:
         tr._squash = scene["squash_at"](scene["impacts"], tr.name, ta)
-        tr._push = scene["push_at"](scene["impacts"], tr.name, ta, tr.facing)
+        # recoil is measured along the way the body is *drawn*, not the way it
+        # was built: after a turn the two are opposite, and the flinch would
+        # shove a fighter towards the man who just hit him
+        tr._push = scene["push_at"](scene["impacts"], tr.name, ta,
+                                    1 if tr.facing_at(ta) >= 0 else -1)
 
-    # far fighter first: the one further from the centre of action
+    # ---- the painter's algorithm -------------------------------------------
+    # Back to front by lane, and the engaged pair share the fighting plane so
+    # their blades meet in the same depth. A body waiting in the back lane is
+    # also dimmed, which is the other half of separating four silhouettes.
+    from .rig import is_engaged, active_opponent as _rig_active
+    from .rig import active_opponent as _active
+    _engaged = _active(scene, ta)
+    for tr in tracks:
+        tr.z_now = _lane_with(scene, tr, ta, _engaged)
+        tr._dim = 1.0 if is_engaged(scene, tr, ta) else WAITING_DIM
     heads = {tr.name: body(tr, ta, tr._squash, tr._push) for tr in tracks}
-    order = sorted(tracks, key=lambda tr: -abs(heads[tr.name].head[0] - 640))
+    order = sorted(tracks, key=lambda tr: (tr.z_now,
+                                           -abs(heads[tr.name].head[0] - 640)))
 
     # contact shadows in one translucent pass, inside the band they occupy
     boxes = []

@@ -80,7 +80,11 @@ class Track:
         lands lower. Both are drawn smaller too, so the depth reads even though
         the plate itself is flat.
         """
-        return GROUND + 26.0 * self.z
+        return GROUND + 26.0 * getattr(self, "z_now", self.z)
+
+    def ground_z(self) -> float:
+        """The lane the figure is drawn in this frame (-1 back, +1 near)."""
+        return float(getattr(self, "z_now", self.z))
 
     # -- the horizontal axis ---------------------------------------------
     def facing_at(self, t: float) -> float:

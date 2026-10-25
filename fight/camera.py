@@ -156,6 +156,21 @@ def _pair(scene, t: float):
     return sa, other.skel(t)
 
 
+def _fighting_pair(scene, t: float):
+    """The hero and the man the beat sheet says he is fighting."""
+    lead = scene.get("hero") or scene["red"]
+    name = None
+    for t0, t1, who in scene.get("engagements") or ():
+        if t0 <= t <= t1:
+            name = who
+            break
+    tracks = scene.get("tracks") or (scene["red"], scene["blue"])
+    other = next((tr for tr in tracks if tr.name == name), None)
+    if other is None or other is lead:
+        return _pair(scene, t)
+    return lead.skel(t), other.skel(t)
+
+
 def _downed(scene, t: float):
     """The fighter on the floor, if there is one — the camera follows it down."""
     best = None
@@ -308,6 +323,37 @@ def camera(scene, t: float, ta: float | None = None) -> dict:
             whip = 0.0
     else:
         whip = 0.0
+    # the aerial shot is a *framing*, not a camera position: the highest head
+    # and the floor have to be in the same frame, or the jump has no height to
+    # read against. The lens pulls back just enough to hold both.
+    if shot["anchor"] == "air":
+        # the aerial frame is the two men who are actually in the air, not the
+        # nearest silhouette: a bystander's head must not decide the framing of
+        # a juggle. Both heads and the floor go in the box, and the lens is held
+        # between 0.88 and 1.02 so the jump still has scale.
+        # frame the bodies *as drawn*: during a hit-stop the animation clock is
+        # behind the film clock, and a box built on the film clock crops the very
+        # man the shot exists to show
+        sa, sb = _fighting_pair(scene, ta)
+        top = min(sa.head[1], sb.head[1]) - 96.0
+        # the bottom of the box is the *feet*, not the design ground: a figure is
+        # drawn at its own scale, so the floor line and the soles are not always
+        # the same pixel -- and a jump framed to the floor line still cuts the
+        # legs off the man who did not jump
+        feet = max(max(sk.pts[8][1], sk.pts[10][1]) for sk in (sa, sb))
+        floor = max(GROUND, scene["hero"].ground_y(), feet)
+        x = (sa.head[0] + sb.head[0]) * 0.5
+        y = (top + floor) * 0.5 + shot.get("dy", 0.0)
+        zoom = min(1.02, max(0.88, DESIGN_H * 0.84 / max(200.0, floor - top)))
+    # the floor is the ground the audience stands on: unless the shot is the
+    # aerial one, the lens may not cut the feet off. A tight shot that clips a
+    # fighter's legs at the ankle reads as a mistake, not as a close-up.
+    if shot["anchor"] != "air":
+        ground_here = min((tr.ground_y() if hasattr(tr, "ground_y") else GROUND)
+                          for tr in scene["tracks"])
+        bottom = y + DESIGN_H * 0.5 / zoom
+        if bottom < ground_here + 10.0:
+            y += ground_here + 10.0 - bottom
     sx, sy = shake(scene["impacts"], ta)
     return {"x": x, "y": y, "zoom": zoom, "dof": dof, "shake_x": sx,
             "shake_y": sy, "whip": whip, "shot": shot,

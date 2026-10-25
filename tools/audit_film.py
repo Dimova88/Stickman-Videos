@@ -21,7 +21,8 @@ import sys
 sys.path.insert(0, __file__.rsplit("/tools/", 1)[0])
 
 from fight import vfx  # noqa: E402
-from fight.clashfilm import DURATION, GROUND, camera, pose_of, scene, solve  # noqa: E402
+from fight.clashfilm import (DESIGN_H, DURATION, GROUND, camera, pose_of,  # noqa: E402
+                            scene, solve)
 from fight.core import SEG  # noqa: E402
 from fight.poses import ARM_K, LEG_K  # noqa: E402
 from fight import rig  # noqa: E402
@@ -29,7 +30,7 @@ from fight import rig  # noqa: E402
 LEG = (SEG[7][2] + SEG[8][2]) * LEG_K
 ARM = (SEG[3][2] + SEG[4][2]) * ARM_K
 
-MIN_BEATS = 12
+MIN_BEATS_FLOOR = 12
 MIN_MOVES = 5
 MIN_SWAPS = 2
 MIN_X = 420.0
@@ -39,18 +40,45 @@ MIN_IMPACT_FRAMES = 2
 MAX_STACK = 0.15
 
 # round 8: the horizontal axis, the close fight, the chains and the juggle
-MIN_HERO_FLIPS = 6
-MIN_ENEMY_FLIPS = 4
+
 #: A three-frame turn cannot be instantly correct: for one or two frames the body
 #: is still opening out on the old side. What must never happen is a fighter who
 #: *stays* facing away — one who moonwalks through a whole exchange. So the gate
 #: is a run length (a quarter of a second) plus a loose total, not a hard count
 #: of transition frames.
-MAX_MISALIGNED = 45
+MAX_MISALIGNED = 18
 MAX_MISALIGNED_RUN = 6
+
+# round 9: the range, not just the floor
+MIN_HERO_TURNS, MAX_HERO_TURNS = 8, 13
+MIN_RIVAL_TURNS, MAX_RIVAL_TURNS = 6, 14
+MIN_CONTACT, MAX_CONTACT = 20.0, 38.0
+MIN_BEATS, MAX_BEATS = 22, 28
+MAX_SCRUM = 24
+SCRUM_RADIUS = 175.0
+PERIMETER = 210.0
+MAX_WAITING_CLOSE = 24     # frames a bystander may crowd the duel
+MA_HOLDS = 3               # dramatic pauses before the bursts
+MA_FRAMES = (10, 12)       # each one is a beat of held breath
+MIN_KNOCK = 280.0
+MAX_KNOCK = 360.0
+MIN_BIG_KNOCKS = 5         # long knockbacks that clear the frame
 MAX_MIN_GAP = 42.0          # the closest the pair ever get - a grapple needs < 42
 MIN_CHAINED = 5             # beats with no recovery phase
 MIN_DUAL_AIR = 8            # frames with both men off the floor
+
+
+def drawn_x(sc, tr, t: float) -> float:
+    """Where a fighter's pelvis is *on screen*: keys plus the blow's recoil."""
+    f = 1 if tr.facing_at(t) >= 0 else -1
+    return pose_of(tr, t).x + sc["push_at"](sc["impacts"], tr.name, t, f)
+
+
+def dual_air_next(sc, hero, live, t) -> bool:
+    """Is somebody else off the floor at the same time as the hero?"""
+    if pose_of(hero, t).y >= hero.ground_y() - 200.0:
+        return False
+    return any(pose_of(tr, t).y < tr.ground_y() - 200.0 for tr in live)
 
 
 def main() -> int:
@@ -75,6 +103,10 @@ def main() -> int:
     hero_flips = enemy_flips = misaligned = dual_air = 0
     misalign_run = misalign_worst = 0
     min_gap = 1e9
+    scrum_frames = 0
+    air_frames = 0
+    air_framed = 0
+    waiting_close = 0
     prev_hero_sign = None
     prev_enemy_sign = {tr.name: None for tr in sc["tracks"] if tr.name != "red"}
 
@@ -138,7 +170,7 @@ def main() -> int:
                     # pelvis against pelvis: a body thrown over the attacker's
                     # head has its head on one side of him and its feet on the
                     # other, and it is the body that changed sides
-                    dx = pose_of(by_name[engaged], t).x - pose_of(hero, t).x
+                    dx = drawn_x(sc, by_name[engaged], t) - drawn_x(sc, hero, t)
                     # only a *settled* body has a direction: while the turn is
                     # in progress the figure is edge-on and points nowhere
                     wrong = (abs(dx) > 28.0 and abs(hero.facing_at(t)) > 0.95
@@ -149,9 +181,29 @@ def main() -> int:
                         misalign_worst = max(misalign_worst, misalign_run)
                     else:
                         misalign_run = 0
+            # the *engaged* pair only: the crowd is allowed to be near the
+            # camera, the two men trading blows are not allowed to be inside
+            # each other
             for tr in live:
-                min_gap = min(min_gap,
-                              abs(skels[tr.name].head[0] - skels["red"].head[0]))
+                # an upright pair, not a thrown body on its way to the floor:
+                # a ragdoll crossing the attacker is a knockdown, not clipping
+                if (engaged == tr.name
+                        and pose_of(hero, t).y < hero.ground_y() - 40.0
+                        and pose_of(tr, t).y < tr.ground_y() - 40.0):
+                    min_gap = min(min_gap,
+                                  abs(drawn_x(sc, tr, t) - drawn_x(sc, hero, t)))
+
+        # the aerial frame: the tallest head must be clear of the top edge and the
+        # floor must still be in shot, or the jump has no height to read against
+        if dual_air_next(sc, hero, live, t):
+            air_frames += 1
+            top = cam["y"] - (DESIGN_H * 0.5) / max(1e-6, cam["zoom"])
+            bottom = cam["y"] + (DESIGN_H * 0.5) / max(1e-6, cam["zoom"])
+            hi = min([pose_of(hero, t).y - 96.0] +
+                     [pose_of(tr, t).y - 96.0 for tr in live])
+            ground_now = min([hero.ground_y()] + [tr.ground_y() for tr in live])
+            if hi >= top + 20.0 and ground_now <= bottom - 8.0:
+                air_framed += 1
 
         # both men in the air at the same time: the thing a single jump cannot do
         # 200 px above the floor is well clear of standing (a standing pelvis is
@@ -159,6 +211,40 @@ def main() -> int:
         if (pose_of(hero, t).y < hero.ground_y() - 200.0 and
                 any(pose_of(tr, t).y < tr.ground_y() - 200.0 for tr in live)):
             dual_air += 1
+
+        # --- the perimeter: an enemy who is not in this exchange watches it from
+        # outside the duel, not from the protagonist's shoulder
+        busy_now = set()
+        for b in sc.get("beats", ()):
+            t0, _t1, _t2, t_back = b.phases
+            if t0 - 0.35 <= t <= t_back + 0.35:
+                busy_now.add(b.attacker)
+                if b.defender:
+                    busy_now.add(b.defender)
+        for tr in live:
+            if tr.name in busy_now:
+                continue
+            # a man *walking in* is allowed to cross the perimeter - that is how
+            # he enters the fight. A man who is *waiting* is the problem: he
+            # stands still inside the duel and the frame becomes a queue.
+            v = abs(tr.sample(t + 1.0 / 24.0)[1] - tr.sample(t)[1])
+            if v > 6.0 or pose_of(tr, t).y < tr.ground_y() - 40.0:
+                continue
+            if abs(drawn_x(sc, tr, t) - drawn_x(sc, hero, t)) < PERIMETER:
+                waiting_close += 1
+                break
+
+        # --- anti-scrum: how often is the middle of the frame a pile of bodies?
+        # Three or more living fighters inside a 175 px band is the "four bodies,
+        # one knot" shot; it is allowed for the pincer, not for the whole film.
+        live_x = sorted(tr.sample(t)[1] for tr in live)
+        for i in range(len(live_x) - 1):
+            j = i + 1
+            while j < len(live_x) and live_x[j] - live_x[i] <= SCRUM_RADIUS:
+                j += 1
+            if j - i >= 3:
+                scrum_frames += 1
+                break
 
         if vfx.impact_frame_index(sc, t) is not None:
             impacts_frames.add(round(t, 3))
@@ -169,7 +255,9 @@ def main() -> int:
     zoom_range = max(zooms) - min(zooms)
     beats = sc.get("beats", ())
     moves = set(sc.get("move_types", ()))
-    side_swaps = sum(1 for b in beats if getattr(b, "side_swap", False))
+    # sides are counted from the film, not from a flag: every frame the engaged
+    # pair swap left/right is a crossing the audience actually sees
+    side_swaps = len(swaps)
     chained = sum(1 for b in beats
                   if (0 if getattr(b, "chain", False)
                       else round(getattr(b, "recover", 1.0) * args.fps)) <= 1)
@@ -191,11 +279,20 @@ def main() -> int:
     print(f"  contact      closest pair {min_gap:.1f} px (need < {MAX_MIN_GAP:.0f})")
     print(f"  rhythm       {chained} chained beats (recovery <= 1 frame, need {MIN_CHAINED})")
     print(f"  air          {dual_air} frames with both men off the floor (need {MIN_DUAL_AIR})")
+    print(f"  air frame    {air_framed}/{air_frames} airborne frames hold the floor in shot")
     print(f"  depth        z lanes {z_lanes}")
+    print(f"  scrum        {scrum_frames} frames with 3+ live bodies inside "
+          f"{SCRUM_RADIUS:.0f} px (max {MAX_SCRUM})")
+    print(f"  perimeter    waiting enemies crowd the duel in {waiting_close} frames "
+          f"(max {MAX_WAITING_CLOSE}, {PERIMETER:.0f} px)")
+    print(f"  ma           {len(sc.get('ma') or ())} holds of "
+          f"{[round((b - a) * args.fps) for a, b in (sc.get('ma') or ())]} frames")
+    print(f"  knockback    {len([k for k in [float(b.knock) for b in beats if b.defender] if MIN_KNOCK <= k <= MAX_KNOCK])} "
+          f"in {MIN_KNOCK:.0f}-{MAX_KNOCK:.0f} px (need {MIN_BIG_KNOCKS})")
 
     if worst_leg > 1.0001 or worst_arm > 1.0001:
         fails.append(f"a limb is longer than its bones (leg {worst_leg:.4f}, arm {worst_arm:.4f})")
-    if len(beats) < MIN_BEATS:
+    if len(beats) < MIN_BEATS_FLOOR:
         fails.append(f"only {len(beats)} CombatBeat objects (need {MIN_BEATS})")
     if len(moves) < MIN_MOVES:
         fails.append(f"only {len(moves)} move types (need {MIN_MOVES})")
@@ -209,21 +306,53 @@ def main() -> int:
         fails.append(f"waiting enemies stacked in {stacked} frames (over {MAX_STACK:.0%})")
     if zoom_range < MIN_ZOOM_RANGE:
         fails.append(f"camera zoom range {zoom_range:.2f} (need {MIN_ZOOM_RANGE:.2f})")
-    if hero_flips < MIN_HERO_FLIPS:
-        fails.append(f"the hero turns {hero_flips} times (need {MIN_HERO_FLIPS})")
-    if enemy_flips < MIN_ENEMY_FLIPS:
-        fails.append(f"the rivals turn {enemy_flips} times in total (need {MIN_ENEMY_FLIPS})")
+    if not (MIN_HERO_TURNS <= hero_flips <= MAX_HERO_TURNS):
+        fails.append(f"the hero turns {hero_flips} times (need {MIN_HERO_TURNS}-{MAX_HERO_TURNS})")
+    if not (MIN_RIVAL_TURNS <= enemy_flips <= MAX_RIVAL_TURNS):
+        fails.append(f"the rivals turn {enemy_flips} times in total "
+                     f"(need {MIN_RIVAL_TURNS}-{MAX_RIVAL_TURNS})")
     if misaligned > MAX_MISALIGNED:
         fails.append(f"{misaligned} frames facing away from the active opponent (max {MAX_MISALIGNED})")
     if misalign_worst > MAX_MISALIGNED_RUN:
         fails.append(f"the hero faces away for {misalign_worst} frames in a row "
                      f"(max {MAX_MISALIGNED_RUN}) - he is moonwalking")
-    if min_gap > MAX_MIN_GAP:
-        fails.append(f"the pair never get closer than {min_gap:.0f} px (need under {MAX_MIN_GAP:.0f})")
+    if not (MIN_CONTACT <= min_gap <= MAX_CONTACT):
+        fails.append(f"closest engaged gap {min_gap:.1f} px (need {MIN_CONTACT}-{MAX_CONTACT})")
+    if scrum_frames > MAX_SCRUM:
+        fails.append(f"{scrum_frames} frames with 3+ live bodies inside {SCRUM_RADIUS:.0f} px "
+                     f"(max {MAX_SCRUM}) - that is a scrum, not a fight")
+    if len(beats) > MAX_BEATS:
+        fails.append(f"{len(beats)} beats (need {MIN_BEATS}-{MAX_BEATS}): the film has no Ma")
     if chained < MIN_CHAINED:
         fails.append(f"only {chained} beats chain without a recovery (need {MIN_CHAINED})")
     if dual_air < MIN_DUAL_AIR:
         fails.append(f"only {dual_air} frames with both fighters airborne (need {MIN_DUAL_AIR})")
+    # --- the aerial shot must hold the floor in frame -----------------------
+    if air_frames and air_framed < 0.8 * air_frames:
+        fails.append(f"only {air_framed}/{air_frames} airborne frames keep the floor in shot "
+                     f"(need 80 %): the jump has no height to read against")
+    if waiting_close > MAX_WAITING_CLOSE:
+        fails.append(f"{waiting_close} frames with a waiting enemy inside {PERIMETER:.0f} px "
+                     f"of the hero (max {MAX_WAITING_CLOSE}) - that is a pile, not a duel")
+    # --- the Ma holds -------------------------------------------------------
+    ma = list(sc.get("ma") or ())
+    if len(ma) != MA_HOLDS:
+        fails.append(f"{len(ma)} Ma holds (need {MA_HOLDS}): the film has no breathing room")
+    for a, b in ma:
+        n = round((b - a) * args.fps)
+        if not (MA_FRAMES[0] <= n <= MA_FRAMES[1]):
+            fails.append(f"a Ma hold lasts {n} frames (need {MA_FRAMES[0]}-{MA_FRAMES[1]})")
+        inside = [be for be in beats if a - 1e-6 <= be.t <= b + 1e-6]
+        if inside:
+            fails.append(f"{len(inside)} beat(s) land inside the Ma hold at {a:.2f}s")
+    # --- the knockbacks that are meant to clear the frame -------------------
+    knocks = [float(be.knock) for be in beats if be.defender]
+    big = [k for k in knocks if MIN_KNOCK <= k <= MAX_KNOCK]
+    if len(big) < MIN_BIG_KNOCKS:
+        fails.append(f"only {len(big)} knockbacks in the {MIN_KNOCK:.0f}-{MAX_KNOCK:.0f} px band "
+                     f"(need {MIN_BIG_KNOCKS})")
+    if knocks and max(knocks) > MAX_KNOCK:
+        fails.append(f"a knockback throws a body {max(knocks):.0f} px (max {MAX_KNOCK:.0f})")
     if len(z_lanes) < 2:
         fails.append("every fighter stands on one depth lane")
     if accents < MIN_IMPACT_FRAMES:

@@ -19,6 +19,7 @@ one locks blades before the finish.
 from __future__ import annotations
 
 import math
+import os
 
 from . import poses as PS
 from .clash import (BLUE, BLUE_DARK, DESIGN_H, DESIGN_W, DURATION, EASE, GROUND,
@@ -150,121 +151,95 @@ def build(set_name: str = "mountain") -> dict:
     from .beats import CombatBeat, compile_beats
 
     # ---- the exchanges ------------------------------------------------
-    # Round 8: the film is no longer a list of single blows. Each exchange is a
-    # *pattern* with its own rhythm, its own distance and its own geometry:
+    # Round 9: 26 beats, not 41. Twenty-six is what fits in thirty seconds once
+    # the film is allowed to *breathe*: three Ma holds of twelve frames, and
+    # every finishing blow throws its man 280-340 px clear of the duel, so the
+    # centre of the frame is two bodies and not a scrum of four.
     #
-    #   flurry      five cuts with no recovery between them
-    #   grapple     the pair closes to a hand's width and one man is thrown
+    #   flurry      three cuts with no recovery between them
+    #   grapple     the pair close to a shoulder's width and one is thrown
     #   pincer      one rival on each side, so the hero has to turn
     #   juggle      both men in the air, which no single beat can produce
-    #   weave       a dodge with a counter, in the middle of the blade
+    #   weave       a dodge inside the blade, then the counter
     def B(t, atk, move, dfd, **kw):
         return CombatBeat(t, atk, move, dfd, **kw)
 
+    #: the Ma holds: the two men stop and look at each other before the storm.
+    #: Twelve frames each, at the three places the film changes gear.
+    MA = ((4.86, 5.36), (10.05, 10.55), (16.22, 16.72))
+
     beats = [
-        # -- A. flurry_clash_barrage: five contacts, no pause between them ----
-        B(3.58, "red", "blitz_dash_slash", "blue", gap=56, chain=True,
-          from_x=700, to_x=740, size=0.9),
-        B(3.76, "red", "blitz_dash_slash", "blue", gap=54, chain=True,
-          from_x=740, to_x=756, size=0.9),
-        B(3.94, "red", "rising_dragon_slash", "blue", gap=52, chain=True,
-          from_x=756, to_x=772, size=0.9),
-        B(4.12, "red", "blitz_dash_slash", "blue", gap=54, chain=True,
-          from_x=772, to_x=788, size=0.9),
-        B(4.36, "red", "spartan_front_kick", "blue", gap=58, knock=100.0,
-          from_x=788, to_x=800, size=1.0),
-        # -- B. close_grapple_throw: collar grab, then a judo throw ---------
-        B(4.86, "blue", "dash_collar_grab", "red", gap=34,
-          from_x=900, to_x=830, size=0.9, dust=True),
-        B(5.28, "red", "overhead_judo_slam", "blue", gap=20, knock=250.0,
-          from_x=806, to_x=830, outcome="down", size=1.0),
-        # -- C. pincer_ambush_pingpong: one on each side --------------------
-        B(5.96, "teal", "blitz_dash_slash", "red", gap=58,
-          from_x=700, to_x=768, outcome="parry", knock=30.0, size=0.9),
-        B(6.30, "slate", "blitz_dash_slash", "red", gap=56,
-          from_x=1120, to_x=940, outcome="parry", knock=30.0, size=0.9),
-        B(6.66, "red", "spin_back_slash", "slate", gap=50, knock=160.0,
-          from_x=830, to_x=886, defender_x=930, side_swap=True, size=1.1),
-        # -- D. aerial_juggle_slam: off the floor, both of them ------------
-        B(7.22, "red", "rising_dragon_slash", "slate", gap=48, launch=140.0,
-          hold_air=0.40, from_x=886, to_x=930, size=1.1),
-        B(7.48, "red", "air_pursuit_slash", "slate", gap=44, air=104.0,
-          launch=124.0, hold_air=0.30, chain=True, from_x=930, to_x=948,
-          size=1.0),
-        B(7.68, "red", "air_pursuit_slash", "slate", gap=42, air=96.0,
-          launch=104.0, hold_air=0.24, chain=True, from_x=948, to_x=964,
-          size=1.0),
-        B(7.96, "red", "air_meteor_slam", "slate", gap=40, air=40.0,
-          knock=190.0, from_x=964, to_x=990, outcome="lethal", size=1.3),
-        # -- E. matrix_weave_counter: the blade passes his face ------------
-        B(8.84, "red", "matrix_weave", "teal", gap=66, outcome="whiff",
+        # -- flurry A: three cuts, no pause, then a kick that clears the room
+        B(3.90, "red", "blitz_dash_slash", "blue", gap=54, chain=True,
+          from_x=700, to_x=742, size=0.9),
+        B(4.08, "red", "blitz_dash_slash", "blue", gap=52, chain=True,
+          from_x=742, to_x=760, size=0.9),
+        B(4.26, "red", "rising_dragon_slash", "blue", gap=50, chain=True,
+          from_x=760, to_x=778, size=0.95),
+        B(4.52, "red", "spartan_front_kick", "blue", gap=48, knock=300.0,
+          from_x=778, to_x=800, size=1.1),
+        # -- grapple 1: blue gets a collar, red throws him over the shoulder
+        B(6.10, "blue", "dash_collar_grab", "red", gap=30,
+          from_x=760, to_x=850, size=0.9),
+        B(6.52, "red", "overhead_judo_slam", "blue", gap=26, knock=330.0,
+          from_x=820, to_x=846, outcome="down", size=1.1),
+        # -- pincer: teal from the left, red turns and cuts back
+        B(8.00, "teal", "blitz_dash_slash", "red", gap=56, knock=34.0,
+          from_x=700, to_x=800, outcome="parry", size=0.95),
+        B(8.30, "red", "spin_back_slash", "teal", gap=54, knock=300.0,
+          from_x=846, to_x=904, size=1.15),
+        # -- juggle 1: slate is lifted off the floor and finished in the air
+        B(8.90, "red", "rising_dragon_slash", "slate", gap=46, launch=240.0,
+          hold_air=0.50, from_x=904, to_x=940, size=1.1),
+        B(9.10, "red", "air_pursuit_slash", "slate", gap=44, air=170.0,
+          launch=230.0, hold_air=0.42, chain=True, from_x=940, to_x=958, size=1.0),
+        B(9.38, "red", "air_meteor_slam", "slate", gap=42, air=60.0,
+          knock=300.0, from_x=958, to_x=986, outcome="lethal", size=1.35),
+        # -- weave and counter: the blade passes his face
+        B(11.30, "red", "matrix_weave", "teal", gap=60, outcome="whiff",
           from_x=990, to_x=1000, size=0.8),
-        B(9.24, "red", "sonic_thrust_pierce", "teal", gap=58, knock=90.0,
-          from_x=1000, to_x=1050, size=1.1),
-        # -- F. flurry_clash_barrage, the other way round -------------------
-        B(9.96, "blue", "blitz_dash_slash", "red", gap=54, chain=True,
-          from_x=700, to_x=760, size=0.85),
-        B(10.12, "blue", "blitz_dash_slash", "red", gap=52, chain=True,
-          from_x=760, to_x=772, size=0.85),
-        B(10.28, "blue", "rising_dragon_slash", "red", gap=54, chain=True,
-          from_x=772, to_x=784, size=0.85),
-        B(10.44, "blue", "blitz_dash_slash", "red", gap=52, chain=True,
-          from_x=784, to_x=796, size=0.85),
-        B(10.70, "red", "spartan_front_kick", "blue", gap=56, knock=110.0,
-          from_x=800, to_x=838, size=1.0),
-        # -- G. the second grapple: teal throws the hero -------------------
-        B(11.40, "teal", "dash_collar_grab", "red", gap=34,
-          from_x=1100, to_x=1020, size=0.95),
-        B(11.86, "teal", "overhead_judo_slam", "red", gap=20, knock=250.0,
-          from_x=1044, to_x=1068, outcome="down", size=1.0),
-        # -- H. the second juggle, and the second kill ---------------------
-        B(13.30, "red", "rising_dragon_slash", "teal", gap=46, launch=140.0,
-          hold_air=0.36, from_x=800, to_x=880, size=1.1),
-        B(13.52, "red", "air_pursuit_slash", "teal", gap=44, air=104.0,
-          launch=122.0, hold_air=0.28, chain=True, from_x=880, to_x=898,
-          size=1.0),
-        B(13.72, "red", "air_pursuit_slash", "teal", gap=42, air=96.0,
-          launch=104.0, hold_air=0.22, chain=True, from_x=898, to_x=912,
-          size=1.0),
-        B(14.04, "red", "air_meteor_slam", "teal", gap=40, air=40.0,
-          knock=210.0, from_x=912, to_x=940, outcome="lethal", size=1.35),
-        # -- I. the last third: singles, then another pincer ---------------
-        B(15.30, "slate", "blitz_dash_slash", "red", gap=58,
-          from_x=1180, to_x=1060, size=1.0),
-        B(16.00, "red", "parry_riposte_spin", "slate", gap=50, knock=150.0,
-          from_x=980, to_x=1030, size=1.1),
-        B(17.10, "blue", "blitz_dash_slash", "red", gap=56,
-          from_x=700, to_x=770, size=1.0),
-        B(17.80, "red", "spartan_front_kick", "blue", gap=54, knock=90.0,
-          from_x=790, to_x=826, size=1.0),
-        B(18.50, "slate", "blitz_dash_slash", "red", gap=56,
-          from_x=1120, to_x=1000, outcome="parry", knock=28.0, size=0.9),
-        B(18.82, "blue", "blitz_dash_slash", "red", gap=54,
-          from_x=700, to_x=790, outcome="parry", knock=28.0, size=0.9),
-        B(19.30, "red", "spin_back_slash", "slate", gap=48, knock=140.0,
-          from_x=850, to_x=906, defender_x=900, side_swap=True, size=1.1),
-        B(20.28, "red", "blitz_dash_slash", "blue", gap=52, chain=True,
-          from_x=880, to_x=920, size=0.9),
-        B(20.46, "red", "blitz_dash_slash", "blue", gap=50, chain=True,
-          from_x=920, to_x=940, size=0.9),
-        B(20.64, "red", "rising_dragon_slash", "blue", gap=52, chain=True,
-          from_x=940, to_x=960, size=0.9),
-        B(20.90, "red", "spartan_front_kick", "blue", gap=56, knock=120.0,
-          from_x=960, to_x=1000, size=1.05),
-        B(21.90, "red", "sonic_thrust_pierce", "blue", gap=56, knock=80.0,
-          from_x=1010, to_x=1064, size=1.0),
-        # -- the finisher: the same cut as the opening, three times as hard
-        B(22.44, "red", "spartan_front_kick", "blue", gap=54, knock=30.0,
-          from_x=1060, to_x=1094, size=0.5),
-        B(23.30, "red", "blitz_dash_slash", "blue", gap=44, knock=180.0,
-          from_x=1094, to_x=1184, outcome="lethal", size=1.8),
+        B(11.70, "red", "sonic_thrust_pierce", "teal", gap=54, knock=190.0,
+          from_x=1000, to_x=1052, size=1.1),
+        # -- flurry B, the other way round, and a kick to answer it
+        B(12.40, "blue", "blitz_dash_slash", "red", gap=54, chain=True,
+          from_x=760, to_x=812, size=0.9),
+        B(12.58, "blue", "rising_dragon_slash", "red", gap=52, chain=True,
+          from_x=812, to_x=824, size=0.9),
+        B(12.84, "red", "spartan_front_kick", "blue", gap=50, knock=300.0,
+          from_x=824, to_x=860, size=1.05),
+        # -- grapple 2: teal takes his turn to throw the hero
+        B(13.90, "teal", "dash_collar_grab", "red", gap=30,
+          from_x=1140, to_x=1050, size=0.95),
+        B(14.32, "teal", "overhead_judo_slam", "red", gap=26, knock=330.0,
+          from_x=1024, to_x=1048, outcome="down", size=1.1),
+        # -- juggle 2, the last kill before the duel comes down to two men
+        B(15.20, "red", "rising_dragon_slash", "teal", gap=46, launch=240.0,
+          hold_air=0.50, from_x=820, to_x=880, size=1.1),
+        B(15.40, "red", "air_pursuit_slash", "teal", gap=44, air=170.0,
+          launch=230.0, hold_air=0.42, chain=True, from_x=880, to_x=898, size=1.0),
+        B(15.68, "red", "air_meteor_slam", "teal", gap=42, air=60.0,
+          knock=300.0, from_x=898, to_x=926, outcome="lethal", size=1.4),
+        # -- the duel is down to two men on a cleared floor
+        B(17.60, "blue", "blitz_dash_slash", "red", gap=56, knock=60.0,
+          from_x=710, to_x=800, size=1.0),
+        B(18.30, "red", "spin_back_slash", "blue", gap=54, knock=300.0,
+          from_x=850, to_x=908, size=1.15),
+        B(19.60, "red", "sonic_thrust_pierce", "blue", gap=54, knock=170.0,
+          from_x=960, to_x=1014, size=1.05),
+        # -- the finisher: the push-off, then the same cut three times as hard
+        B(22.44, "red", "spartan_front_kick", "blue", gap=50, knock=120.0,
+          from_x=1060, to_x=1086, size=0.6),
+        B(23.30, "red", "blitz_dash_slash", "blue", gap=42, knock=200.0,
+          from_x=1086, to_x=1170, outcome="lethal", size=1.8),
     ]
 
     # ---- the depth lanes ------------------------------------------------
     # The arena is painted flat, so depth has to be staged: a rival that is
-    # "behind" the duel stands higher on the plate and is drawn smaller. Without
-    # this the four men are a row of cardboard cut-outs on one line.
-    hero.z = 0.0
+    # "behind" the duel stands higher on the plate and is drawn smaller, and the
+    # crowd is split to both sides so the hero has a reason to turn. The hero
+    # sits a little forward of the axis, because a duel fought dead-on is two
+    # silhouettes in a line and the audience cannot tell which is nearer.
+    hero.z = 0.30
     a.z = -0.85          # blue, stalking from the back
     b.z = 0.45           # teal, half a step towards the lens
     c.z = -0.35          # slate, between the two
@@ -344,14 +319,29 @@ def build(set_name: str = "mountain") -> dict:
     def lie(tr, t):
         return tr.sample(t)[0].get("hip", 999.0) < 95.0
 
+    def busy(t):
+        """Who is in the exchange at ``t``: those two are allowed to be close."""
+        out = set()
+        for b in beats:
+            if b.t - b.windup - 0.10 <= t <= b.t + 0.65:
+                out.add(b.attacker)
+                if b.defender:
+                    out.add(b.defender)
+        return out
+
     for _ in range(8):
         t = 0.0
         while t <= DURATION:
             hs = hero.skel(t).head
-            # and the enemies must not stack into one silhouette either
+            # and the enemies must not stack into one silhouette either — but
+            # only the ones *waiting*: the pair in the exchange is supposed to
+            # be close, and pushing them apart is what broke every grapple
+            live = busy(t)
             for i, f1 in enumerate(foes):
                 for f2 in foes[i + 1:]:
                     if lie(f1, t) or lie(f2, t):
+                        continue
+                    if f1.name in live or f2.name in live:
                         continue
                     d = abs(f2.skel(t).head[0] - f1.skel(t).head[0])
                     if d < 168.0:
@@ -431,7 +421,10 @@ def build(set_name: str = "mountain") -> dict:
             # the window is the contact, not the whole beat: during the wind-up
             # of the *next* attack the hero is still dealing with this one, and
             # a window that starts at the wind-up has both men "active" at once
-            engagements.append((b.t - 0.14, b.t + 0.30, opp))
+            # the window opens on the *wind-up*, not on the contact: a fighter
+            # who only turns after the blow has already been thrown is turned
+            # by the hit, and the pincer arrives from a side he never looked at
+            engagements.append((b.t - 0.26, b.t + 0.30, opp))
     engagements.sort()
     # an exchange ends when the next one begins: a window that runs on into the
     # following beat makes the hero "wrong" for still doing what he was told
@@ -439,11 +432,113 @@ def build(set_name: str = "mountain") -> dict:
                     if i + 1 < len(engagements) else t1, name)
                    for i, (t0, t1, name) in enumerate(engagements)]
 
-    # ---- the horizontal axis: every turn is decided by where the bodies are
+    # ---- the horizontal axis and the body capsule ------------------------
+    # The two depend on each other: a turn is decided by where the bodies are,
+    # and the push that keeps them out of each other's pixels is drawn along the
+    # way a body is facing. So they are solved, in that order, twice — the second
+    # pass sees the geometry the first one produced, and after that both are
+    # stable to the frame.
     from . import rig as _rig
-    _turns = _rig.drive_facings({"tracks": tracks, "hero": hero,
-                                 "engagements": engagements},
-                                t0=0.0, t1=30.2)
+    from .beats import BODY_GAP
+    from .clashfilm import pose_of as _pose_of
+
+    def pose_y(tr, tt):
+        return _pose_of(tr, tt).y
+
+    def solve_turns():
+        return _rig.drive_facings({"tracks": tracks, "hero": hero,
+                                   "engagements": engagements},
+                                  t0=0.0, t1=30.2)
+
+    def solve_capsule(rounds: int = 8) -> None:
+        """Two pelvises closer than BODY_GAP draw two torsos in the same pixels.
+
+        The engaged pair is held at a shoulder's width after every other solver
+        has had its turn. The push is a key inserted *on the frame that needs
+        it* and on the frame grid the film is actually rendered on: inserting at
+        an arbitrary time leaves the sample at the neighbouring frame
+        interpolated, which is how a 34 px gap kept collapsing to 3.
+        """
+        for _ in range(rounds):
+            f = 0
+            while f / 24.0 < DURATION:
+                tt = f / 24.0
+                f += 1
+                who = _rig.active_opponent({"engagements": engagements}, tt)
+                if who is None:
+                    continue
+                other = by_name.get(who)
+                if other is None:
+                    continue
+                # a body already on the floor is left alone: the capsule is
+                # about two men *standing* in each other's space, not about a
+                # ragdoll on its way past
+                if (pose_y(hero, tt) > hero.ground_y() - 40.0
+                        or pose_y(other, tt) > other.ground_y() - 40.0):
+                    continue
+                # the flinch is part of the body: `push_at` shoves a fighter
+                # 13 px off his own keys around a contact, so a gap that is
+                # 34 px on the timeline is 8 px on the screen unless counted
+                hf = 1 if hero.facing_at(tt) >= 0 else -1
+                of = 1 if other.facing_at(tt) >= 0 else -1
+                ax = hero.sample(tt)[1] + push_at(impacts, "red", tt, hf)
+                dx = other.sample(tt)[1] + push_at(impacts, other.name, tt, of)
+                gap = dx - ax
+                if abs(gap) >= BODY_GAP - 0.5:
+                    continue
+                sgn = 1.0 if gap >= 0.0 else -1.0
+                pose, _ = other.sample(tt)
+                other.key(tt, pose, ax + sgn * BODY_GAP, "smooth")
+
+    # ---- the perimeter: a rival who is not in this exchange watches it from
+    # outside it. Standing an idle enemy a shoulder away from the clash is what
+    # turns four bodies into one knot: he is not fighting, he is queueing.
+    def solve_perimeter(radius: float = 250.0) -> None:
+        for tr in tracks:
+            if tr is hero:
+                continue
+            wins = sorted((b.phases[0] - 0.45, b.phases[3] + 0.35)
+                          for b in beats if tr.name in (b.attacker, b.defender))
+            idle, cur = [], 0.0
+            for a, b in wins:
+                if a - cur > 0.50:
+                    idle.append((cur + 0.05, a - 0.05))
+                cur = max(cur, b)
+            if DURATION - cur > 0.50:
+                idle.append((cur + 0.05, DURATION - 0.10))
+            def upright(tt):
+                """A body on the floor is owned by the ragdoll: it may not be
+                slid sideways to make room, or it skates across the arena."""
+                return pose_y(tr, tt) < tr.ground_y() - 40.0
+
+            for a, b in idle:
+                mid = (a + b) * 0.5
+                if not (upright(a) and upright(mid) and upright(b)):
+                    continue
+                xa = tr.sample(a)[1]
+                xb = tr.sample(b)[1]
+                if abs(tr.sample(mid)[1] - hero.sample(mid)[1]) >= radius:
+                    continue
+                side = 1.0 if xa >= hero.sample(a)[1] else -1.0
+                pose_a = tr.sample(a)[0]
+                pose_b = tr.sample(b)[0]
+                tx = hero.sample(mid)[1] + side * radius
+                tin = min(max(a + 0.55, a), b)
+                # out to the perimeter, hold it while the duel moves under him,
+                # then walk back in for his own beat
+                tr.key(a, pose_a, xa, "smooth")
+                tr.key(tin, pose_a, min(1160.0, max(120.0, tx)), "smooth")
+                if b - 0.60 > tin:
+                    tr.key(b - 0.60, pose_b,
+                           min(1160.0, max(120.0, hero.sample(b - 0.60)[1] + side * radius)),
+                           "smooth")
+                tr.key(b, pose_b, xb, "smooth")
+
+    solve_perimeter()
+    _turns = 0
+    for _ in range(2):
+        _turns = solve_turns()
+        solve_capsule()
 
     # ---- impact positions: where the steel meets
     for e in impacts:
@@ -472,7 +567,7 @@ def build(set_name: str = "mountain") -> dict:
     named = {tr.name: tr for tr in tracks}
     return {"set": set_name, "tracks": tracks, "hero": hero, **named, "impacts": impacts, "dust": dusts,
             "beats": beats, "move_types": sorted({b.move for b in beats}),
-            "turns": _turns, "engagements": engagements,
+            "turns": _turns, "engagements": engagements, "ma": MA,
             "texts": texts, "cuts": cuts, "blade": True,
             "ink": (16.90, 23.30),
             "clock": Clock(impacts), "squash_at": squash_at,
@@ -485,49 +580,70 @@ def build(set_name: str = "mountain") -> dict:
 # standard cut is a little wider than the duel's, and the whip pans land on the
 # clashes — that is where the steel rings.
 SHOTS_STEEL = (
+    # -- the arena and the walk-in
     dict(t0=0.00, t1=2.30, anchor="action", zoom=0.92, z1=0.98, follow=0.30,
          dof=0.05, style="cut", ground=0.80),
     dict(t0=2.30, t1=3.70, anchor="action", zoom=1.02, z1=1.08, follow=1.0,
          dof=0.06, style="cut", ground=0.79),
-    # the first exchange, from the ledge: you need the whole arc in frame
-    dict(t0=3.70, t1=5.40, anchor="high", zoom=0.96, z1=1.02, follow=0.6,
+    # -- the first exchange, from the ledge: you need the whole arc in frame
+    dict(t0=3.70, t1=4.86, anchor="high", zoom=0.96, z1=1.02, follow=0.6,
          dof=0.0, style="cut", sqy=0.90, ground=0.84),
-    dict(t0=5.40, t1=6.10, anchor="action", zoom=1.10, z1=1.14, follow=1.0,
+    # -- Ma 1: the blade is held, the lens drifts in, nothing cuts
+    dict(t0=4.86, t1=5.45, anchor="action", zoom=1.14, z1=1.20, follow=0.35,
+         dof=0.06, style="cut", ground=0.80),
+    dict(t0=5.45, t1=6.05, anchor="action", zoom=1.08, z1=1.12, follow=1.0,
          dof=0.08, style="cut", ground=0.79),
-    dict(t0=6.10, t1=6.90, anchor="action", zoom=1.16, follow=1.0, dof=0.10,
+    # -- the collar grab and the judo throw, tight: this is a grapple, not a swipe
+    dict(t0=6.05, t1=6.95, anchor="action", zoom=1.16, follow=1.0, dof=0.10,
          style="whip", ground=0.78, zoom_hit=0.10),
-    # the juggle: both men are off the floor, so framing them on the ground
-    # line cuts their heads off — the camera goes up with them
-    dict(t0=6.90, t1=8.10, anchor="air", zoom=0.86, z1=0.94, follow=1.0,
-         dof=0.08, style="cut", ground=0.68),
-    dict(t0=8.10, t1=9.60, anchor="action", zoom=1.00, z1=1.06, follow=0.8,
+    dict(t0=6.95, t1=7.95, anchor="action", zoom=1.02, z1=1.06, follow=0.8,
          dof=0.05, style="cut", ground=0.80),
-    dict(t0=9.60, t1=11.40, anchor="down", zoom=1.30, follow=1.0, dof=0.18,
-         style="whip", ground=0.74),
-    dict(t0=13.16, t1=14.20, anchor="air", zoom=0.86, z1=0.96, follow=1.0,
-         dof=0.08, style="cut", ground=0.68),
-    dict(t0=11.40, t1=13.16, anchor="action", zoom=1.04, z1=1.12, follow=1.0,
-         dof=0.05, style="cut", ground=0.79),
-    dict(t0=14.20, t1=16.40, anchor="action", zoom=0.94, z1=1.00, follow=0.8,
-         dof=0.0, style="cut", ground=0.80),
-    dict(t0=16.40, t1=17.60, anchor="high", zoom=0.98, z1=1.04, follow=0.6,
+    # -- the pincer: two men at him, and the frame has to show both
+    dict(t0=7.95, t1=8.65, anchor="high", zoom=0.98, z1=1.02, follow=0.7,
          dof=0.0, style="cut", sqy=0.90, ground=0.84),
-    dict(t0=17.60, t1=19.60, anchor="action", zoom=1.12, z1=1.18, follow=1.0,
-         dof=0.10, style="cut", ground=0.78, zoom_hit=0.08),
-    # straight in on the lock: the two blades are the shot, so the lens goes to
-    # them rather than to a fist -- and it cuts, because a whip here would smear
-    # the very frame where the steel meets
-    dict(t0=19.60, t1=21.20, anchor="action", zoom=1.06, z1=1.22, follow=1.0,
-         dof=0.06, style="cut", ground=0.78, zoom_hit=0.07),
-    dict(t0=21.20, t1=22.90, anchor="action", zoom=1.06, z1=1.12, follow=1.0,
+    # -- juggle 1: both men are off the floor, so the lens pulls out and the
+    #    floor stays in shot -- the height only reads against the ground
+    dict(t0=8.65, t1=9.62, anchor="air", zoom=0.90, z1=1.00, follow=1.0,
+         dof=0.08, style="cut", ground=0.70),
+    dict(t0=9.62, t1=10.05, anchor="down", zoom=1.34, follow=1.0, dof=0.20,
+         style="whip", ground=0.74),
+    # -- Ma 2
+    dict(t0=10.05, t1=10.62, anchor="action", zoom=1.14, z1=1.20, follow=0.35,
+         dof=0.06, style="cut", ground=0.80),
+    dict(t0=10.62, t1=11.55, anchor="action", zoom=1.06, z1=1.10, follow=1.0,
+         dof=0.05, style="cut", ground=0.79),
+    dict(t0=11.55, t1=12.35, anchor="action", zoom=1.12, z1=1.18, follow=1.0,
+         dof=0.08, style="cut", ground=0.78, zoom_hit=0.06),
+    dict(t0=12.35, t1=13.30, anchor="action", zoom=1.08, z1=1.14, follow=1.0,
          dof=0.06, style="cut", ground=0.79),
-    dict(t0=22.90, t1=24.40, anchor="action", zoom=1.18, z1=1.26, follow=1.0,
+    # -- grapple 2, the other way round: teal throws the hero
+    dict(t0=13.30, t1=14.50, anchor="action", zoom=1.16, follow=1.0, dof=0.12,
+         style="whip", ground=0.78, zoom_hit=0.09),
+    dict(t0=14.50, t1=15.15, anchor="action", zoom=1.02, z1=1.06, follow=0.8,
+         dof=0.05, style="cut", ground=0.80),
+    # -- juggle 2
+    dict(t0=15.15, t1=16.10, anchor="air", zoom=0.90, z1=1.00, follow=1.0,
+         dof=0.08, style="cut", ground=0.70),
+    # -- Ma 3: the last breath before it is one against one
+    dict(t0=16.10, t1=16.80, anchor="action", zoom=1.16, z1=1.22, follow=0.35,
+         dof=0.06, style="cut", ground=0.80),
+    dict(t0=16.80, t1=17.90, anchor="action", zoom=1.04, z1=1.10, follow=0.9,
+         dof=0.04, style="cut", ground=0.80),
+    # -- the duel: dash, spin-back, thrust
+    dict(t0=17.90, t1=19.90, anchor="action", zoom=1.12, z1=1.18, follow=1.0,
+         dof=0.10, style="cut", ground=0.78, zoom_hit=0.08),
+    # -- straight in on the lock: the two blades are the shot
+    dict(t0=19.90, t1=21.60, anchor="action", zoom=1.06, z1=1.20, follow=1.0,
+         dof=0.06, style="cut", ground=0.78, zoom_hit=0.07),
+    dict(t0=21.60, t1=22.60, anchor="high", zoom=0.98, z1=1.04, follow=0.6,
+         dof=0.0, style="cut", sqy=0.90, ground=0.84),
+    dict(t0=22.60, t1=24.40, anchor="action", zoom=1.14, z1=1.26, follow=1.0,
          dof=0.10, style="whip", ground=0.78, zoom_hit=0.12),
-    # tight on the body, but not so tight that the man who put it there is out
-    # of shot: at 1.40 the winner was cropped and the beat had no author
+    # -- tight on the body, but not so tight that the man who put it there is
+    #    out of shot
     dict(t0=24.40, t1=25.90, anchor="winner", zoom=1.24, follow=1.0, dof=0.16,
          style="cut", ground=0.80),
-    # the winner shot sits low: the K.O. card needs the air above his head
+    # -- the K.O. card needs the air above his head
     dict(t0=25.90, t1=30.20, anchor="winner", zoom=1.12, z1=1.00, follow=0.5,
          dof=0.14, style="whip", ground=0.87),
 )
