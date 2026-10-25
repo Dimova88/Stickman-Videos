@@ -157,7 +157,7 @@ def titles(words):
     return [
         dict(t0=25.34, t1=26.95, text="K.O.", style="ko"),
         dict(t0=26.95, t1=30.20, text="RED WINS", style="title"),
-        dict(t0=26.70, t1=30.20, text=words["sub"], style="sub"),
+        dict(t0=26.95, t1=30.20, text=words["sub"], style="sub"),
         dict(t0=0.0, t1=30.0, text=words["hud"], style="hud"),
     ]
 
