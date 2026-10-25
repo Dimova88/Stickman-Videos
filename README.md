@@ -15,6 +15,7 @@ script — no editor, no timeline clicking, no stock assets.
 | [`renders/storyboard.jpg`](renders/storyboard.jpg) | 12-moment storyboard of the duel |
 | [`assets/steel_assets_sheet.png`](assets/steel_assets_sheet.png) | the exported originals: katana, slash crescent, sparks, ink glyphs |
 | [`renders/fight_1080p.mp4`](renders/fight_1080p.mp4) | the earlier clean-background 1080p fight (no HUD) |
+| [`renders/longform_2scenes_360p.mp4`](renders/longform_2scenes_360p.mp4) | **two scenes of the 10-minute cut** (60 s), rendered scene-by-scene by `generate_movie.py` and joined with a stream copy |
 
 
 ## Working on it
@@ -923,6 +924,39 @@ floor alone invites an overshoot.
   clamped so the floor line cannot leave the bottom of the frame.
 * **Ma.** 26 beats, **three holds of 12 frames** before the bursts, and eight
   knockbacks of 280-360 px that clear the frame.
+
+
+### Round 10 — the objects, the powers, and a body that is a chain
+
+Round 9 made the frame legible. Round 10 attacks the four things that still made
+it read as an *animation* rather than as a fight:
+
+* **The sword is no longer welded to the wrist.** `engine/weapons_and_props.py`
+  makes each object a body with an owner or without one: at 12.9 s blue is
+  kicked and his katana leaves his hand, spins and sticks in the dirt; at 14.4 s
+  red's blade **shatters** into four chips and he fights **empty-handed for 118
+  frames** (taijutsu: fists, a knee, a two-handed hammer); at 16.9 s blue draws a
+  second blade; at 19.4 s red **conjures a spear of light**. Five state changes,
+  none of them a swap — each is caused on screen.
+* **The fight stops being a sword fight.** `engine/superpowers.py` adds fractal
+  lightning (midpoint displacement with branches), residual afterimages of the
+  man's own past poses for the 21.0 s flash-step, an awakening aura, stones torn
+  off the floor, and an energy beam with a white core and an impact dome.
+  `engine/destruction_physics.py` puts 8–16 polygonal chips of floor in the air at
+  every slam, with gravity, one bounce and friction.
+* **The body is a chain.** `engine/biomechanics.py` delays the spine and the
+  arms behind the pelvis by one to three frames, scaled by how fast the joint is
+  travelling, with the hip and the elbow always lagging with their own limb so a
+  hinge can never invert, and the lag pulled out on the contact frame so the
+  spark and the fist land together. Damaged bodies now react by **zone** — head
+  snaps the neck, gut folds the spine into a C, sweep takes the feet.
+* **A 10-minute film is possible at all.** `generate_movie.py` renders scene by
+  scene from a manifest (`story_templates/epic_structure_10min.json`: 19 scenes,
+  9 min 34 s, five acts), joins the encoded segments with a stream copy so peak
+  RAM is one scene, and offers `--pipe` for a constant-memory raw path straight
+  into FFmpeg's stdin. `engine/camera_director.py` and
+  `engine/soundtrack_engine.py` plan the lens and the score per act, including
+  the structural silences.
 
 The sound is no longer a loop: layered foley (whooshes tuned by limb weight,
 dirt footsteps read off the rig, flesh with sub drops, inharmonic steel, sonic

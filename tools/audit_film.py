@@ -63,6 +63,12 @@ MA_FRAMES = (10, 12)       # each one is a beat of held breath
 MIN_KNOCK = 280.0
 MAX_KNOCK = 360.0
 MIN_BIG_KNOCKS = 5         # long knockbacks that clear the frame
+
+# round 10: the fight has to change its *nature*, not just its distance
+MIN_WEAPON_CHANGES = 4     # equip -> disarm / break / draw / conjure, per film
+MIN_POWERS = 5             # distinct superpower systems on screen
+MIN_HIT_ZONES = 3          # head / gut / sweep, each with its own reaction
+MIN_UNARMED_FRAMES = 48    # two seconds of fists, knees and throws
 MAX_MIN_GAP = 42.0          # the closest the pair ever get - a grapple needs < 42
 MIN_CHAINED = 5             # beats with no recovery phase
 MIN_DUAL_AIR = 8            # frames with both men off the floor
@@ -287,6 +293,40 @@ def main() -> int:
           f"(max {MAX_WAITING_CLOSE}, {PERIMETER:.0f} px)")
     print(f"  ma           {len(sc.get('ma') or ())} holds of "
           f"{[round((b - a) * args.fps) for a, b in (sc.get('ma') or ())]} frames")
+    # ---- round 10: objects, powers, anatomy ------------------------------
+    transitions = list(sc.get("weapon_transitions") or ())
+    powers = list(sc.get("powers") or ())
+    kinds = {p["kind"] for p in powers}
+    systems = set()
+    if "flash_step" in kinds:
+        systems.add("afterimages")
+    if "awakening" in kinds:
+        systems.add("lightning")
+        systems.add("levitating_rocks")
+    if "beam" in kinds:
+        systems.add("energy_beam")
+    if sc.get("debris") is not None:
+        systems.add("debris")
+    if any(t[2] == "shattered" for t in transitions):
+        systems.add("shattered_steel")
+    fields = list(sc.get("props").props) if sc.get("props") is not None else []
+    # how long the protagonist fights with nothing in his hands: a taijutsu
+    # phase is not a flourish, it needs long enough to be a *phase*
+    unarmed_frames = 0
+    if sc.get("props") is not None:
+        for f in range(int(round(DURATION * args.fps))):
+            tt = f / args.fps
+            if sc["props"].held_by(tt, hero.name) is None:
+                unarmed_frames += 1
+    armed_windows = [(p.prop_id, e[0]) for p in fields for e in p.events]
+    unarmed = [p for p in fields if p.events and any(e[1] == "hold"
+                                                    and e[2].get("owner") is None
+                                                    for e in p.events)]
+    print(f"  weapons      {len(transitions)} state changes "
+          f"({', '.join(sorted({t[2] for t in transitions}))})")
+    print(f"  powers       {len(systems)} systems: {', '.join(sorted(systems))}")
+    print(f"  anatomy      whip lag on, hit zones {sc.get('hit_zones')}, "
+          f"{unarmed_frames} frames with empty hands")
     print(f"  knockback    {len([k for k in [float(b.knock) for b in beats if b.defender] if MIN_KNOCK <= k <= MAX_KNOCK])} "
           f"in {MIN_KNOCK:.0f}-{MAX_KNOCK:.0f} px (need {MIN_BIG_KNOCKS})")
 
@@ -353,6 +393,23 @@ def main() -> int:
                      f"(need {MIN_BIG_KNOCKS})")
     if knocks and max(knocks) > MAX_KNOCK:
         fails.append(f"a knockback throws a body {max(knocks):.0f} px (max {MAX_KNOCK:.0f})")
+    if len(transitions) < MIN_WEAPON_CHANGES:
+        fails.append(f"only {len(transitions)} weapon state changes "
+                     f"(need {MIN_WEAPON_CHANGES}): the object is welded to the hand")
+    if not any(t[2] in ("airborne_spinning", "shattered", "stuck_in_ground")
+               for t in transitions):
+        fails.append("no weapon is ever dropped, thrown or broken")
+    if not sc.get("whip_lag"):
+        fails.append("whip lag is off: every joint moves on the same frame")
+    zones = set(sc.get("hit_zones") or ())
+    if unarmed_frames < MIN_UNARMED_FRAMES:
+        fails.append(f"only {unarmed_frames} frames fought empty-handed "
+                     f"(need {MIN_UNARMED_FRAMES}): no taijutsu phase")
+    if len(zones) < MIN_HIT_ZONES:
+        fails.append(f"{len(zones)} localised hit reactions (need {MIN_HIT_ZONES})")
+    if len(systems) < MIN_POWERS:
+        fails.append(f"only {len(systems)} superpower systems on screen "
+                     f"(need {MIN_POWERS}): {', '.join(sorted(systems)) or 'none'}")
     if len(z_lanes) < 2:
         fails.append("every fighter stands on one depth lane")
     if accents < MIN_IMPACT_FRAMES:

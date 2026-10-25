@@ -625,13 +625,15 @@ def _speed(now, then, sid: int, dt: float = 0.05):
     return (b[0] - a[0], b[1] - a[1]), math.hypot(b[0] - a[0], b[1] - a[1]) / dt
 
 
-def pose_of(track, t: float, squash: float = 0.0, push: float = 0.0):
-    """The drawable pose: choreography, footwork, the blow, then the IK solve.
+#: whip lag costs three extra pose solves per joint chain, so the finished pose
+#: is memoised per frame: the renderer, the camera, the props and the audits all
+#: ask for the same body at the same instant, and it must be the same body.
+_WHIP_MEMO: dict = {}
+_WHIP_MEMO_MAX = 4096
 
-    Footwork is applied *before* ``to_pose`` because it only edits the pose dict
-    — the foot offsets and lifts the step cycle computes — so the leg IK still
-    does the solve it was tuned against.
-    """
+
+def _raw_pose(track, t: float, squash: float = 0.0, push: float = 0.0):
+    """The authored pose at ``t``: no inertia, no lag. The input to the whip."""
     from . import footwork
     from .impact import compress
     p, x = track.sample(t)
@@ -641,6 +643,60 @@ def pose_of(track, t: float, squash: float = 0.0, push: float = 0.0):
     return to_pose(p, x + push, track.ground_y(), facing=track.facing_at(t),
                    scale=FIG_SCALE * (1.0 + 0.08 * track.ground_z()),
                    widen=STANCE)
+
+
+def pose_of(track, t: float, squash: float = 0.0, push: float = 0.0):
+    """The drawable pose: choreography, footwork, the blow, then the IK solve.
+
+    Footwork is applied *before* ``to_pose`` because it only edits the pose dict
+    — the foot offsets and lifts the step cycle computes — so the leg IK still
+    does the solve it was tuned against.
+
+    On top of that comes the **whip lag** (``engine/biomechanics.py``): every
+    joint but the pelvis is drawn one to three frames behind, by an amount that
+    scales with how fast the body is actually travelling. A fighter standing
+    still is drawn exactly as authored; a fighter lunging is drawn as a chain
+    with mass, and the last link — the fist, the blade — arrives late and
+    slightly long. Three extra solves a frame, memoised, which is cheaper than
+    arguing with a rig that moves as one piece.
+    """
+    now = _raw_pose(track, t, squash, push)
+    if not WHIP_ON:
+        return now
+    key = (id(track), getattr(track, "_rev", 0), round(t, 3))
+    hit = _WHIP_MEMO.get(key)
+    if hit is not None:
+        return hit
+    import engine.biomechanics as _bio
+    dt = 1.0 / 24.0
+    prev = _raw_pose(track, max(0.0, t - dt), squash, push)
+    # what counts as "moving" is the *fastest joint*, not the pelvis: a punch
+    # thrown from a planted stance has a pelvis that has not travelled a pixel
+    # and a fist that crosses forty, and gating on the pelvis switched the whip
+    # off on exactly the frames it exists for
+    from .core import solve as _solve
+    sk_now, sk_prev = _solve(now), _solve(prev)
+    speed = max(math.hypot(sk_now.pts[sid][0] - sk_prev.pts[sid][0],
+                           sk_now.pts[sid][1] - sk_prev.pts[sid][1])
+                for sid in (4, 6, 2))
+    k = _bio.blend_strength(speed)
+    k *= _bio.contact_taper(t, getattr(track, "_hit_times", None))
+    if k <= 0.0:
+        out = now
+    else:
+        older = {}
+        for lag in (1, 2, 3):
+            older[lag] = _raw_pose(track, max(0.0, t - lag * dt), squash, push).angles
+        out = now.copy(angles=tuple(_bio.whip_angles(now.angles, older, k)))
+    if len(_WHIP_MEMO) > _WHIP_MEMO_MAX:
+        _WHIP_MEMO.clear()
+    _WHIP_MEMO[key] = out
+    return out
+
+
+#: the whip lag is on by default; ``--no-whip`` on the harness turns it off for
+#: an A/B of a single frame
+WHIP_ON = True
 
 
 def body(track, t: float, squash: float = 0.0, push: float = 0.0):
@@ -1194,6 +1250,10 @@ def draw_weapon(cv: Canvas, track, t: float, sk) -> None:
     # weapon is gone.
     if sk.head[1] > 470.0:
         return
+    # a conjured weapon is *held by the power*, not by the hand: when the power
+    # lets go the shaft of light goes with it, and the man is left with a fist
+    if w.get("t_end") is not None and t > float(w["t_end"]):
+        return
     length = w.get("len", 92.0) * (track.pose_at(t).scale or 1.0)
     sid = w.get("sid", 6)
     ang = sk.tip_angle(sid)
@@ -1221,8 +1281,103 @@ def draw_weapon(cv: Canvas, track, t: float, sk) -> None:
                                sx.pts[sid][1] - sk.pts[sid][1]) / 0.024
     steelblade.local_crescent(cv, sk.pts[sid], angs, length, power)
     steelblade.thrust_cone(cv, sk.pts[sid], angs[-1], length, speed, power)
+    if w.get("kind") == "energy_spear":
+        # a weapon that was *made*: no steel, a shaft of light with a hot tip
+        import engine.superpowers as _sp
+        _sp.energy_lance(cv, sk.pts[sid], ang, length,
+                         glow=1.0, colour=(150, 240, 255))
+        return
     steelblade.draw_blade(cv, sk.pts[sid], ang, length,
                           glow=min(1.0, power * 1.4))
+
+
+
+# -------------------------------------------------------------------- powers
+def _power_on(p: dict, t: float) -> bool:
+    """Is this power event on screen at ``t``?
+
+    Named ``_power_on`` and not ``_active`` because ``render_frame`` imports
+    ``rig.active_opponent`` as ``_active``: two different questions with one name
+    is how the whole power layer silently drew nothing for an afternoon.
+    """
+    kind = p["kind"]
+    if kind == "awakening":
+        return t >= p["t"]
+    if kind == "flash_step":
+        return p["t"] <= t <= p["t"] + 0.36
+    if kind == "beam":
+        return p["t0"] <= t <= p["t1"]
+    return False
+
+
+def _power_amount(p: dict, t: float) -> float:
+    """How *much* of it: powers ramp in, hold, and cut out."""
+    kind = p["kind"]
+    if kind == "awakening":
+        ramp = max(1e-3, float(p.get("ramp", 2.0)))
+        u = min(1.0, max(0.0, (t - p["t"]) / ramp))
+        return (u * u * (3 - 2 * u)) * (0.86 + 0.14 * math.sin(t * 11.0))
+    if kind == "beam":
+        span = max(1e-3, p["t1"] - p["t0"])
+        u = (t - p["t0"]) / span
+        return float(p.get("power", 1.0)) * min(1.0, math.sin(max(0.0, min(1.0, u)) * math.pi) * 1.6)
+    if kind == "flash_step":
+        age = (t - p["t"]) / 0.36
+        return max(0.0, 1.0 - age)
+    return 0.0
+
+
+def _afterimage(cv: Canvas, track, t: float, colour, alpha: float) -> None:
+    """One residual silhouette: the man's own skeleton, drawn as light.
+
+    Not a motion blur and not a copy of the sprite: five distinct past poses,
+    each fainter than the last, is what tells the eye the body *went* somewhere
+    in the frames it was not supposed to be drawn in.
+    """
+    if alpha <= 0.02:
+        return
+    u = cv.unit()
+    sk = body(track, t)
+    a = int(90 * min(1.0, alpha))
+    # one polyline per chain, no caps: a joint that is drawn as a disc turns a
+    # ghost into a string of beads
+    for chain in ((1, 2), (3, 4), (5, 6), (7, 8), (9, 10)):
+        pts = [cv.wp(sk.starts[chain[0]])]
+        pts += [cv.wp(sk.pts[sid]) for sid in chain]
+        cv.polyline(pts, max(3.0, 10.0 * u), colour, alpha=a)
+    cv.circle(cv.wp(sk.head), max(4.0, sk.head_r * u), colour,
+              width=max(2.0, 2.5 * u), alpha=a)
+
+
+def _draw_beam(cv: Canvas, scene, p: dict, t: float, cam: dict) -> None:
+    """The beam leaves the hand that threw it and lands on the man in front."""
+    import engine.superpowers as _sp
+    amt = _power_amount(p, t)
+    if amt <= 0.03:
+        return
+    who = scene.get(p["who"])
+    on = scene.get(p.get("on", ""))
+    if who is None:
+        return
+    sk = body(who, t)
+    # the *forward* palm: the beam comes out of the hand that is leading
+    hands = [sk.pts[4], sk.pts[6]]
+    hx = sum(h[0] for h in hands) * 0.5
+    hy = sum(h[1] for h in hands) * 0.5
+    if on is not None:
+        tgt_sk = body(on, t)
+        tx, ty = tgt_sk.head[0], tgt_sk.head[1] + 40.0
+    else:
+        tx, ty = hx + 400.0, hy
+    _sp.draw_beam(cv, (hx, hy), (tx, ty), int(round(t * 24)), power=min(1.0, amt),
+                  radius=26.0)
+    # the pressure wave on the floor under the beam
+    u = cv.unit()
+    for i in range(3):
+        rr = (14.0 + 18.0 * i) * amt
+        gy = who.ground_y() - 2.0
+        cv.line(cv.wp((hx - rr, gy)), cv.wp((hx + rr, gy)), max(1.0, 2.0 * u),
+                (226, 246, 255), alpha=int(70 * amt / (1 + i)))
 
 
 # ----------------------------------------------------------------------- frame
@@ -1267,6 +1422,24 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
     # Back to front by lane, and the engaged pair share the fighting plane so
     # their blades meet in the same depth. A body waiting in the back lane is
     # also dimmed, which is the other half of separating four silhouettes.
+    # ---- what is in each hand *now* ---------------------------------------
+    # an object is not welded to a wrist: the prop field says who is holding
+    # what, and a man whose blade is spinning into the dirt is drawn empty-
+    # handed, because that is the pose he is actually in
+    field = scene.get("props")
+    if field is not None:
+        for tr in tracks:
+            held = field.held_by(ta, tr.name)
+            if held is None:
+                tr.weapon = None
+            else:
+                tr.weapon = {"len": held["length"], "sid": 6,
+                             "kind": held["kind"], "t_end": held.get("t_end")}
+    # the whip lag needs to know when this body is *in* a blow, so the inertia is
+    # switched off on the frame the chain arrives
+    for tr in tracks:
+        tr._hit_times = tuple(e["t"] for e in scene["impacts"]
+                              if e.get("by") == tr.name or e.get("on") == tr.name)
     from .rig import is_engaged, active_opponent as _rig_active
     from .rig import active_opponent as _active
     _engaged = _active(scene, ta)
@@ -1292,10 +1465,70 @@ def render_frame(t: float, scene, w: int = DESIGN_W, h: int = DESIGN_H) -> Image
             shadow(ov, heads[tr.name], lifts[tr.name])
         ov.flush()
 
+    import engine.superpowers as _sp
+    import engine.weapons_and_props as _props
+    import engine.destruction_physics as _dest
+    powers = scene.get("powers") or ()
+
+    def _power_at(kind, when=ta):
+        return [p for p in powers if p["kind"] == kind and _power_on(p, when)]
+
+    # the awakened aura and the stones it is lifting: drawn *under* the bodies,
+    # so the figure inside the energy stays a readable silhouette
+    for p in _power_at("awakening"):
+        tr = scene.get(p["who"])
+        if tr is None:
+            continue
+        amt = _power_amount(p, ta)
+        if amt <= 0.02:
+            continue
+        pelvis = pose_of(tr, ta)
+        _sp.aura_ring(cv, (pelvis.x, pelvis.y - 26.0), 118.0, ta, power=amt)
+        rocks = _sp.levitating_rocks(pelvis.x, tr.ground_y(), int(round(ta * 24)),
+                                     count=8, power=amt, seed=7)
+        _sp.draw_levitating_rocks(cv, rocks)
+    # the residual images of a flash-step: five past poses of the same man
+    for p in _power_at("flash_step"):
+        tr = scene.get(p["who"])
+        if tr is None:
+            continue
+        age = ta - p["t"]
+        fade_amt = max(0.0, 1.0 - age / 0.34)
+        if fade_amt <= 0.02:
+            continue
+        for i, (tt, alpha, _pose) in enumerate(
+                _sp.afterimages(tr, p["t"] - 0.001, pose_of,
+                                count=p.get("count", 5),
+                                spacing=p.get("spacing", 0.02))):
+            _afterimage(cv, tr, tt, (120, 236, 255), alpha * fade_amt)
+
     for tr in order:
         trails(cv, tr, ta)
     for tr in order:
         draw_fighter(cv, tr, ta)
+    cv.flush()
+
+    # the leftover machinery of the fight: a blade in the dirt, the pieces of a
+    # broken one, and the floor it all came out of
+    if field is not None:
+        _props.draw_loose(cv, field, ta)
+    if scene.get("debris") is not None:
+        _dest.draw_debris(cv, scene["debris"], ta)
+
+    # lightning arcs from the awakened body, and the beam itself
+    for p in _power_at("awakening"):
+        tr = scene.get(p["who"])
+        amt = _power_amount(p, ta) if tr is not None else 0.0
+        if amt <= 0.25:
+            continue
+        sk = body(tr, ta)
+        for k, sid in enumerate((3, 5)):
+            if ((int(ta * 24) + k * 7) % 9) > 3:
+                continue
+            _sp.draw_lightning(cv, sk.pts[sid], sk.pts[sid + 1],
+                               seed=int(ta * 24) * 13 + k, power=amt * 0.9)
+    for p in _power_at("beam"):
+        _draw_beam(cv, scene, p, ta, cam_state)
     cv.flush()
 
     # steel: the blade is drawn after the body, and the arc it cut in the air is

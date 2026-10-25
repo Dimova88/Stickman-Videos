@@ -230,6 +230,23 @@ def anchor_point(scene, shot, t: float, zoom: float):
         win = sb if name == "red" else sa
         down = sa if name == "red" else sb
         return (win.head[0] * 0.62 + down.head[0] * 0.38, y)
+    if kind == "field":
+        # the last shot of a fight is not a portrait of the winner: it is the
+        # field. Every body — standing, crawling, thrown — has to be inside the
+        # frame, or the film ends on a cropped corpse.
+        xs, hs = [], []
+        for tr in scene.get("tracks") or (scene["red"], scene["blue"]):
+            s = tr.skel(t)
+            fx, fy = _feet(s)
+            xs += [s.head[0], fx]
+            hs += [s.head[1], fy]
+            xs += [q[0] for q in s.pts.values()]
+            hs += [q[1] for q in s.pts.values()]
+        mid = (min(xs) + max(xs)) * 0.5
+        # centre the *content*: the ground line is not the subject of the last
+        # shot, the men on it are
+        yy = (min(hs) + max(hs)) * 0.5 + 12.0 + shot.get("dy", 0.0)
+        return (mid, yy)
     # action: the middle of the pair, framed on the floor line
     return ((sa.head[0] + sb.head[0]) * 0.5, y)
 

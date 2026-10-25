@@ -128,6 +128,10 @@ class Track:
         self._fk(t + ramp, float(target))
 
     def key(self, t: float, pose: dict, x: float, ease: str = "smooth") -> "Track":
+        # every edit bumps a revision number: the renderer memoises poses per
+        # frame, and a solver that inserts a key must not be handed back the
+        # body it was trying to move
+        self._rev = getattr(self, "_rev", 0) + 1
         self.keys = [k for k in self.keys if abs(k[0] - t) > 1e-6]
         self.keys.append((float(t), dict(pose), float(x), ease))
         self.keys.sort(key=lambda k: k[0])

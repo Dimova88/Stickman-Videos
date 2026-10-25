@@ -185,7 +185,54 @@ SPIN_BACK = {
                 a_up=46, a_fore=-58, b_up=32, b_fore=-68, head=12, spine=-6.0),
 }
 
+#: Empty hands. A straight cross, a hook that comes off the same shoulder, and
+#: an elbow in the pocket — the three things a fighter does when the sword is
+#: gone and the distance is already closed.
+TAIJUTSU = {
+    "windup": P(torso=-78, foot_l=(34, 0), foot_r=(-52, 0),
+                a_up=66, a_fore=-46, b_up=22, b_fore=-96, head=6,
+                crouch=16, spine=-8.0, grip_a=1, grip_b=1),
+    "active": P(torso=-58, foot_l=(84, 0), foot_r=(-58, 0),
+                a_up=86, a_fore=-2, b_up=34, b_fore=-64, head=4,
+                crouch=8, spine=10.0, grip_a=1, grip_b=1),
+    "defend": P(torso=-96, foot_l=(24, 0), foot_r=(-44, 0),
+                a_up=52, a_fore=-74, b_up=26, b_fore=-88, head=16,
+                spine=-6.0, grip_a=1, grip_b=1),
+}
+
+#: The knee: the clinch closes, the hips drop, the whole body goes up through
+#: the other man's ribs. No weapon reaches this far inside.
+KNEE = {
+    "windup": P(torso=-92, foot_l=(40, 0), foot_r=(-30, 0),
+                a_up=34, a_fore=-88, b_up=28, b_fore=-94, head=10,
+                crouch=26, spine=-10.0, grip_a=1, grip_b=1),
+    "active": P(torso=-70, foot_l=(46, 62), foot_r=(-26, 0),
+                a_up=18, a_fore=-104, b_up=12, b_fore=-112, head=16,
+                crouch=-6, spine=12.0, grip_a=1, grip_b=1),
+    "defend": P(torso=-86, foot_l=(22, 0), foot_r=(-36, 0),
+                a_up=46, a_fore=-66, b_up=34, b_fore=-78, head=12,
+                spine=-4.0, grip_a=1, grip_b=1),
+}
+
+#: The beam: both palms to the chest, then both arms out and the world in front
+#: of them stops existing. Authored so the hands end *straight ahead* — a beam
+#: that leaves at an angle looks like a hose.
+BEAM = {
+    "windup": P(torso=-88, foot_l=(30, 0), foot_r=(-46, 0),
+                a_up=44, a_fore=34, b_up=40, b_fore=28, head=-4,
+                crouch=22, spine=-12.0, grip_a=1, grip_b=1),
+    "active": P(torso=-64, foot_l=(58, 0), foot_r=(-62, 0),
+                a_up=-4, a_fore=-2, b_up=-10, b_fore=-6, head=-6,
+                crouch=10, spine=6.0, grip_a=1, grip_b=1),
+    "defend": P(torso=-92, foot_l=(18, 0), foot_r=(-40, 0),
+                a_up=40, a_fore=-70, b_up=30, b_fore=-82, head=14,
+                spine=-8.0, grip_a=1, grip_b=1),
+}
+
 PRESETS = {
+    "taijutsu_combo": TAIJUTSU,
+    "knee_strike": KNEE,
+    "energy_beam_blast": BEAM,
     "dash_collar_grab": GRAB,
     "overhead_judo_slam": THROW,
     "matrix_weave": WEAVE,
@@ -237,6 +284,9 @@ class CombatBeat:
     hold_air: float = 0.24
     #: the attacker's own height above the floor at contact, px
     air: float = 0.0
+    #: where the blow lands: "head", "gut", "sweep" or None for a plain hit.
+    #: The zone decides the *anatomy* of the reaction, not the damage.
+    zone: str | None = None
 
     def gap_or(self, default: float) -> float:
         return default if self.gap is None else self.gap
@@ -412,7 +462,15 @@ def compile_beats(beats, tracks, *, guard, on_impact=None, on_dust=None,
                      dx + away * b.knock * 0.25, "smooth")
             else:
                 away = 1.0 if dx >= end else -1.0
-                dkey(t_hit + 0.16, fade(pre["defend"], spine=-4.0),
+                reaction = fade(pre["defend"], spine=-4.0)
+                if b.zone:
+                    # the same blow to the head, the gut and the ankles cannot
+                    # all produce the same flinch: the zone bends the chain at a
+                    # different link (engine/biomechanics.py)
+                    import engine.biomechanics as _bio
+                    reaction = fade(reaction, **_bio.localized_hit(
+                        b.zone, int(1 if dx >= end else -1), min(1.4, b.size)))
+                dkey(t_hit + 0.16, reaction,
                      dx + away * b.knock * 0.45, "out")
                 dfd.key(t_hit + 0.60, dict(guard), fx, "out")
 

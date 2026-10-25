@@ -12,3 +12,7 @@ __pycache__/
 
 # iteration stills
 renders/preview/
+
+# scene segments of the streaming orchestrator (regenerated, and large)
+renders/segments/
+renders/_scenes.txt

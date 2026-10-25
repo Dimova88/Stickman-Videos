@@ -177,7 +177,7 @@ def build(set_name: str = "mountain") -> dict:
         B(4.26, "red", "rising_dragon_slash", "blue", gap=50, chain=True,
           from_x=760, to_x=778, size=0.95),
         B(4.52, "red", "spartan_front_kick", "blue", gap=48, knock=300.0,
-          from_x=778, to_x=800, size=1.1),
+          from_x=778, to_x=800, size=1.1, zone="gut"),
         # -- grapple 1: blue gets a collar, red throws him over the shoulder
         B(6.10, "blue", "dash_collar_grab", "red", gap=30,
           from_x=760, to_x=850, size=0.9),
@@ -206,31 +206,33 @@ def build(set_name: str = "mountain") -> dict:
         B(12.58, "blue", "rising_dragon_slash", "red", gap=52, chain=True,
           from_x=812, to_x=824, size=0.9),
         B(12.84, "red", "spartan_front_kick", "blue", gap=50, knock=300.0,
-          from_x=824, to_x=860, size=1.05),
+          from_x=824, to_x=860, size=1.05, zone="sweep"),
         # -- grapple 2: teal takes his turn to throw the hero
         B(13.90, "teal", "dash_collar_grab", "red", gap=30,
           from_x=1140, to_x=1050, size=0.95),
         B(14.32, "teal", "overhead_judo_slam", "red", gap=26, knock=330.0,
           from_x=1024, to_x=1048, outcome="down", size=1.1),
-        # -- juggle 2, the last kill before the duel comes down to two men
-        B(15.20, "red", "rising_dragon_slash", "teal", gap=46, launch=240.0,
+        # -- juggle 2 with EMPTY HANDS: his blade broke at 14.3, so the last
+        #    kill before the duel is fists, a knee and a two-handed hammer
+        B(15.20, "red", "taijutsu_combo", "teal", gap=46, launch=240.0,
           hold_air=0.50, from_x=820, to_x=880, size=1.1),
-        B(15.40, "red", "air_pursuit_slash", "teal", gap=44, air=170.0,
+        B(15.40, "red", "knee_strike", "teal", gap=44, air=170.0,
           launch=230.0, hold_air=0.42, chain=True, from_x=880, to_x=898, size=1.0),
         B(15.68, "red", "air_meteor_slam", "teal", gap=42, air=60.0,
           knock=300.0, from_x=898, to_x=926, outcome="lethal", size=1.4),
         # -- the duel is down to two men on a cleared floor
         B(17.60, "blue", "blitz_dash_slash", "red", gap=56, knock=60.0,
           from_x=710, to_x=800, size=1.0),
-        B(18.30, "red", "spin_back_slash", "blue", gap=54, knock=300.0,
-          from_x=850, to_x=908, size=1.15),
+        B(18.30, "red", "taijutsu_combo", "blue", gap=54, knock=300.0,
+          from_x=850, to_x=908, size=1.15, zone="head"),
         B(19.60, "red", "sonic_thrust_pierce", "blue", gap=54, knock=170.0,
           from_x=960, to_x=1014, size=1.05),
-        # -- the finisher: the push-off, then the same cut three times as hard
-        B(22.44, "red", "spartan_front_kick", "blue", gap=50, knock=120.0,
-          from_x=1060, to_x=1086, size=0.6),
+        # -- the finisher: the spear goes, and what is left of the arena goes
+        #    with it. Both palms, and the beam does the rest.
+        B(22.44, "red", "energy_beam_blast", "blue", gap=200.0, knock=120.0,
+          from_x=900, to_x=918, size=1.3),
         B(23.30, "red", "blitz_dash_slash", "blue", gap=42, knock=200.0,
-          from_x=1086, to_x=1170, outcome="lethal", size=1.8),
+          from_x=918, to_x=1010, outcome="lethal", size=1.8),
     ]
 
     # ---- the depth lanes ------------------------------------------------
@@ -298,6 +300,13 @@ def build(set_name: str = "mountain") -> dict:
     b.key(3.40, E_GUARD, 1152, "out")
     c.key(3.40, E_GUARD, 1228, "out")
     a.key(3.60, E_GUARD, 700, "out")
+    # ---- the flash-step: he does not cross the arena, he *stops being* in one
+    # place and starts being in the other. Two keys four frames apart: the body
+    # is gone before the eye can follow it, and the afterimages draw the path
+    # the audience is owed.
+    hero.key(20.98, fade(READY, crouch=24), 1014, "out")
+    hero.key(21.02, fade(READY, crouch=12), 900, "snap")
+    hero.key(21.20, fade(READY, crouch=6), 902, "out")
     hero.key(24.20, READY, 1214, "out")
 
     # ------------------------------------------------------ 24.2-30 the sword
@@ -306,8 +315,8 @@ def build(set_name: str = "mountain") -> dict:
     hero.key(28.60, fade(LOW, b_fore=6, torso=-86), 708, "smooth")
 
     title(25.34, 26.95, "K.O.", "ko")
-    title(26.95, 29.30, "RED WINS", "title")
-    title(26.70, 29.40, words["sub"], "sub")
+    title(26.95, 30.20, "RED WINS", "title")
+    title(26.70, 30.20, words["sub"], "sub")
     title(0.0, 30.0, words["hud"], "hud")
 
     tracks = [hero, a, b, c]
@@ -357,8 +366,15 @@ def build(set_name: str = "mountain") -> dict:
 
     # ---- and nobody leaves the painted arena: every key is clamped to the
     # strip of ground the plate actually covers
+    # A dead body is *long*: clamped to one wall, three men thrown the same way
+    # land on the same coordinate and read as one heap of limbs. Each of the
+    # three has his own wall, so the pile has three heads in it.
+    # The wall only moves for a man who is already down, and only from the blow
+    # that put him there: a live fighter still owns the whole strip.
+    wall = {id(a): (23.30, 1210.0), id(b): (15.68, 1075.0), id(c): (9.38, 950.0)}
     for tr in tracks:
-        tr.keys = [(kt, kp, max(520.0, min(1240.0, kx)), ke)
+        t_dead, right = wall.get(id(tr), (1e9, 1240.0))
+        tr.keys = [(kt, kp, max(520.0, min(right if kt > t_dead else 1240.0, kx)), ke)
                    for kt, kp, kx, ke in tr.keys]
 
     # ---- reach: step the attacker in until the *tip* is on the target
@@ -564,8 +580,62 @@ def build(set_name: str = "mountain") -> dict:
     # No face inserts: the accent on these two blows is the ink frame, not a cut
     cuts = ()
 
+    # ---- the objects, the powers and the ground -------------------------
+    # Built last on purpose: a sword leaves the *drawn* wrist of the frame it is
+    # dropped on, not the authored one, so the solver has to have run first.
+    from engine.weapons_and_props import WorldProp, PropField
+    from engine.destruction_physics import DebrisField
+
+    named_tracks = {tr.name: tr for tr in tracks}
+
+    def wrist(tr, t):
+        sk = tr.skel(t)
+        return sk.pts[6]
+
+    katana_red = WorldProp("katana_red", "katana", "red", length=BLADE)
+    x, y = wrist(hero, 14.40)
+    katana_red.shatter(14.40, x, y, pieces=4)
+
+    katana_blue = WorldProp("katana_blue", "katana", "blue", length=BLADE * 0.90)
+    x, y = wrist(named_tracks['blue'], 12.86)
+    katana_blue.launch(12.86, x, y, vx=-7.5, vy=-15.0, av=-0.46)
+
+    # he carries two: the one he lost, and the one drawn from his back at 16.9
+    spare_blue = WorldProp("katana_blue_2", "katana", "blue",
+                           length=BLADE * 0.86, state="sheathed")
+    spare_blue.hold(16.90, "blue")
+
+    spear_red = WorldProp("spear_red", "energy_spear", None,
+                          length=BLADE * 1.35, colour=(150, 240, 255),
+                          state="unarmed", glow=1.0)
+    # and at 24.55 the power lets go: the shaft of light goes out with the fight
+    spear_red.conjure(19.35, "red", t_end=24.55)
+
+    prop_field = PropField([katana_red, katana_blue, spare_blue, spear_red],
+                           duration=DURATION, ground=GROUND)
+
+    #: the powers are a *timeline*, not a switch: what is on screen, when, and
+    #: how much of it. The renderer only samples this.
+    powers = [
+        # his blade breaks, and something under it wakes up
+        {"kind": "awakening", "t": 14.40, "who": "red", "ramp": 2.2},
+        {"kind": "flash_step", "t": 21.00, "who": "red", "count": 6, "spacing": 0.018},
+        {"kind": "beam", "t0": 22.30, "t1": 22.84, "who": "red", "on": "blue",
+         "power": 1.15},
+    ]
+
+    #: the floor loses: every slam and the beam put chips in the air
+    destruction = [{"t": 9.40, "x": 986.0, "power": 1.0},
+                   {"t": 15.70, "x": 926.0, "power": 1.0},
+                   {"t": 22.52, "x": 1050.0, "power": 1.35},
+                   {"t": 23.34, "x": 1052.0, "power": 1.4}]
+    debris = DebrisField(destruction, ground=GROUND, duration=DURATION)
+
     named = {tr.name: tr for tr in tracks}
-    return {"set": set_name, "tracks": tracks, "hero": hero, **named, "impacts": impacts, "dust": dusts,
+    hit_zones = sorted({b.zone for b in beats if b.zone})
+    return {"set": set_name, "props": prop_field, "powers": powers,
+            "hit_zones": hit_zones, "whip_lag": True,
+            "debris": debris, "weapon_transitions": prop_field.transitions(), "tracks": tracks, "hero": hero, **named, "impacts": impacts, "dust": dusts,
             "beats": beats, "move_types": sorted({b.move for b in beats}),
             "turns": _turns, "engagements": engagements, "ma": MA,
             "texts": texts, "cuts": cuts, "blade": True,
@@ -644,6 +714,8 @@ SHOTS_STEEL = (
     dict(t0=24.40, t1=25.90, anchor="winner", zoom=1.24, follow=1.0, dof=0.16,
          style="cut", ground=0.80),
     # -- the K.O. card needs the air above his head
-    dict(t0=25.90, t1=30.20, anchor="winner", zoom=1.12, z1=1.00, follow=0.5,
-         dof=0.14, style="whip", ground=0.87),
+    # -- the field: the winner walks off the left of the frame, the three men he
+    #    put down stay inside the right of it. Nothing is cropped by the border.
+    dict(t0=25.90, t1=30.20, anchor="field", zoom=0.94, z1=0.88, follow=0.4,
+         dof=0.14, style="whip", ground=0.86),
 )
