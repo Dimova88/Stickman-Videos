@@ -172,14 +172,18 @@ def _fighting_pair(scene, t: float):
 
 
 def _downed(scene, t: float):
-    """The fighter on the floor, if there is one — the camera follows it down."""
+    """The fighter on the floor, if there is one — the camera follows it down.
+
+    Read from ``scene["tracks"]``, not from two hard-coded names: the second
+    film's cast is not red and blue, and a camera that only knows the first
+    film's cast cannot shoot the second one.
+    """
+    tracks = scene.get("tracks") or (scene["red"], scene["blue"])
     best = None
-    for name in ("red", "blue"):
-        tr = scene[name]
-        p = tr.sample(t)[0]
-        h = p.get("hip", 999.0)
+    for tr in tracks:
+        h = tr.sample(t)[0].get("hip", 999.0)
         if best is None or h < best[1]:
-            best = (name, h, tr)
+            best = (tr.name, h, tr)
     return best
 
 

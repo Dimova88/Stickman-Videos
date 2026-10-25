@@ -11,6 +11,8 @@ script — no editor, no timeline clicking, no stock assets.
 | [`renders/desert_clash_720p.mp4`](renders/desert_clash_720p.mp4) | the same fight on the desert plate |
 | [`renders/steel_clash_720p.mp4`](renders/steel_clash_720p.mp4) | **One Blade, Three Men**: katana, 1 vs 3, 30 s, mountain |
 | [`renders/steel_desert_720p.mp4`](renders/steel_desert_720p.mp4) | the blade film on the desert plate |
+| [`renders/duel_night_720p.mp4`](renders/duel_night_720p.mp4) | **The Empty Hand**: one blade against one man at the blue hour, 30 s — script in [`BATTLE_SCRIPT.md`](BATTLE_SCRIPT.md) |
+| [`renders/duel_night_storyboard.jpg`](renders/duel_night_storyboard.jpg) | 24-moment storyboard of the night duel |
 | [`renders/steel_storyboard.jpg`](renders/steel_storyboard.jpg) | 8-moment storyboard of the blade film |
 | [`renders/storyboard.jpg`](renders/storyboard.jpg) | 12-moment storyboard of the duel |
 | [`assets/steel_assets_sheet.png`](assets/steel_assets_sheet.png) | the exported originals: katana, slash crescent, sparks, ink glyphs |

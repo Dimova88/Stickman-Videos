@@ -97,6 +97,21 @@ def main() -> int:
     step = 1.0 / args.fps
     hero = sc["hero"]
 
+    #: The gates are the round-10 set, but a *film* may declare its own numbers
+    #: for the ones that describe its shape rather than the engine's health: a
+    #: one-against-one duel never needs eight turns, and a thirty-four-beat film
+    #: is not a film without pauses. What is NOT overridable is the engine's own
+    #: health — bones, capsule, z lanes, facings, weapons, powers, whip lag.
+    G = {"hero_turns": (MIN_HERO_TURNS, MAX_HERO_TURNS),
+         "rival_turns": (MIN_RIVAL_TURNS, MAX_RIVAL_TURNS),
+         "beats": (MIN_BEATS, MAX_BEATS),
+         "chained": MIN_CHAINED,
+         "dual_air": MIN_DUAL_AIR,
+         "big_knocks": MIN_BIG_KNOCKS,
+         "ma": MA_HOLDS,
+         "contact": (MIN_CONTACT, MAX_CONTACT)}
+    G.update(sc.get("gates") or {})
+
     fails: list[str] = []
     frames = 0
     t = 0.0
@@ -114,7 +129,8 @@ def main() -> int:
     air_framed = 0
     waiting_close = 0
     prev_hero_sign = None
-    prev_enemy_sign = {tr.name: None for tr in sc["tracks"] if tr.name != "red"}
+    hero_name = sc["hero"].name
+    prev_enemy_sign = {tr.name: None for tr in sc["tracks"] if tr.name != hero_name}
 
     while t < DURATION:
         frames += 1
@@ -135,7 +151,7 @@ def main() -> int:
         zooms.append(cam["zoom"])
 
         # who is the nearest opponent, and which side is he on?
-        foes = [skels[tr.name].head[0] for tr in sc["tracks"] if tr.name != "red"]
+        foes = [skels[tr.name].head[0] for tr in sc["tracks"] if tr.name != hero_name]
         nearest = min(foes, key=lambda fx: abs(fx - hx))
         sign = 1 if nearest - hx >= 0 else -1
         if prev_sign is not None and sign != prev_sign and abs(nearest - hx) > 35:
@@ -143,7 +159,7 @@ def main() -> int:
         prev_sign = sign
 
         alive = sorted(skels[tr.name].head[0] for tr in sc["tracks"]
-                       if tr.name != "red" and skels[tr.name].head[1] < GROUND - 55)
+                       if tr.name != hero_name and skels[tr.name].head[1] < GROUND - 55)
         if any(abs(alive[i + 1] - alive[i]) < 65.0 for i in range(len(alive) - 1)):
             stacked += 1
 
@@ -155,7 +171,7 @@ def main() -> int:
             hero_flips += 1
         prev_hero_sign = hsign
         for tr in sc["tracks"]:
-            if tr.name == "red":
+            if tr.name == hero_name:
                 continue
             esign = 1 if tr.facing_at(t) >= 0 else -1
             if prev_enemy_sign[tr.name] is not None and esign != prev_enemy_sign[tr.name]:
@@ -163,7 +179,7 @@ def main() -> int:
             prev_enemy_sign[tr.name] = esign
 
         live = [tr for tr in sc["tracks"]
-                if tr.name != "red" and skels[tr.name].head[1] < GROUND - 55]
+                if tr.name != hero_name and skels[tr.name].head[1] < GROUND - 55]
         if live:
             # the man he is *engaged with*, not merely the nearest silhouette: a
             # rival can stand closer than the one he is trading with, and turning
@@ -346,11 +362,12 @@ def main() -> int:
         fails.append(f"waiting enemies stacked in {stacked} frames (over {MAX_STACK:.0%})")
     if zoom_range < MIN_ZOOM_RANGE:
         fails.append(f"camera zoom range {zoom_range:.2f} (need {MIN_ZOOM_RANGE:.2f})")
-    if not (MIN_HERO_TURNS <= hero_flips <= MAX_HERO_TURNS):
-        fails.append(f"the hero turns {hero_flips} times (need {MIN_HERO_TURNS}-{MAX_HERO_TURNS})")
-    if not (MIN_RIVAL_TURNS <= enemy_flips <= MAX_RIVAL_TURNS):
+    if not (G["hero_turns"][0] <= hero_flips <= G["hero_turns"][1]):
+        fails.append(f"the hero turns {hero_flips} times "
+                     f"(need {G['hero_turns'][0]}-{G['hero_turns'][1]})")
+    if not (G["rival_turns"][0] <= enemy_flips <= G["rival_turns"][1]):
         fails.append(f"the rivals turn {enemy_flips} times in total "
-                     f"(need {MIN_RIVAL_TURNS}-{MAX_RIVAL_TURNS})")
+                     f"(need {G['rival_turns'][0]}-{G['rival_turns'][1]})")
     if misaligned > MAX_MISALIGNED:
         fails.append(f"{misaligned} frames facing away from the active opponent (max {MAX_MISALIGNED})")
     if misalign_worst > MAX_MISALIGNED_RUN:
@@ -361,12 +378,12 @@ def main() -> int:
     if scrum_frames > MAX_SCRUM:
         fails.append(f"{scrum_frames} frames with 3+ live bodies inside {SCRUM_RADIUS:.0f} px "
                      f"(max {MAX_SCRUM}) - that is a scrum, not a fight")
-    if len(beats) > MAX_BEATS:
-        fails.append(f"{len(beats)} beats (need {MIN_BEATS}-{MAX_BEATS}): the film has no Ma")
-    if chained < MIN_CHAINED:
-        fails.append(f"only {chained} beats chain without a recovery (need {MIN_CHAINED})")
-    if dual_air < MIN_DUAL_AIR:
-        fails.append(f"only {dual_air} frames with both fighters airborne (need {MIN_DUAL_AIR})")
+    if not (G["beats"][0] <= len(beats) <= G["beats"][1]):
+        fails.append(f"{len(beats)} beats (need {G['beats'][0]}-{G['beats'][1]})")
+    if chained < G["chained"]:
+        fails.append(f"only {chained} beats chain without a recovery (need {G['chained']})")
+    if dual_air < G["dual_air"]:
+        fails.append(f"only {dual_air} frames with both fighters airborne (need {G['dual_air']})")
     # --- the aerial shot must hold the floor in frame -----------------------
     if air_frames and air_framed < 0.8 * air_frames:
         fails.append(f"only {air_framed}/{air_frames} airborne frames keep the floor in shot "
@@ -388,9 +405,9 @@ def main() -> int:
     # --- the knockbacks that are meant to clear the frame -------------------
     knocks = [float(be.knock) for be in beats if be.defender]
     big = [k for k in knocks if MIN_KNOCK <= k <= MAX_KNOCK]
-    if len(big) < MIN_BIG_KNOCKS:
+    if len(big) < G["big_knocks"]:
         fails.append(f"only {len(big)} knockbacks in the {MIN_KNOCK:.0f}-{MAX_KNOCK:.0f} px band "
-                     f"(need {MIN_BIG_KNOCKS})")
+                     f"(need {G['big_knocks']})")
     if knocks and max(knocks) > MAX_KNOCK:
         fails.append(f"a knockback throws a body {max(knocks):.0f} px (max {MAX_KNOCK:.0f})")
     if len(transitions) < MIN_WEAPON_CHANGES:

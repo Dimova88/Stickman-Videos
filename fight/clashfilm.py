@@ -32,9 +32,11 @@ from .draw import Canvas, Cam
 ASSETS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                       "assets")
 SET_FILES = {"mountain": "mountain_background.png",
-             "desert": "desert_background.png"}
+             "desert": "desert_background.png",
+             "night": "night_background.png"}
 #: a top-down floor plate, for the shots from above
-GROUND_FILES = {"mountain": "ground_mountain.png", "desert": "ground_desert.png"}
+GROUND_FILES = {"mountain": "ground_mountain.png", "desert": "ground_desert.png",
+                "night": "ground_night.png"}
 GROUND_FILE_ASPECT = 1.0                       # both generated plates are square
 SR = 44100
 
@@ -306,20 +308,29 @@ def cuts_of(scene):
     return ()
 
 
+#: A set name is ``<film>-<plate>``: ``steel-mountain`` is the steel script on
+#: the sunset plate, ``duel-night`` the duel script on the blue hour. The film
+#: name picks the script module; the plate picks the painted background. A bare
+#: name (``mountain``) is the original two-man duel and needs no script.
+FILMS = {"steel": "steel", "duel": "duel"}
+
+
 def scene(set_name: str = "mountain"):
     """The choreography is deterministic: build it once per process and set."""
     if set_name not in _scene_cache:
-        if set_name.startswith("steel"):
-            from .steel import build as steel_build
-            base = "desert" if "desert" in set_name else "mountain"
-            sc = steel_build(base)
+        film, _, plate = set_name.partition("-")
+        if plate and film in FILMS:
+            import importlib
+            mod = importlib.import_module("." + FILMS[film], __package__)
+            base = plate
+            sc = mod.build(base)
         else:
             base = set_name
             sc = build(set_name)
         sc["bg_path"] = os.path.join(ASSETS, SET_FILES.get(base, "mountain_background.png"))
         sc["ground_path"] = os.path.join(
             ASSETS, GROUND_FILES.get(base, "ground_mountain.png"))
-        sc["puffs"] = vfx.build_puffs((sc["red"], sc["blue"]))
+        sc["puffs"] = vfx.build_puffs(tuple(sc["tracks"][:2]))
         _scene_cache[set_name] = sc
     return _scene_cache[set_name]
 
@@ -942,6 +953,19 @@ def trails(cv: Canvas, track, t: float, dt: float = 0.075) -> None:
         if b[1] > GROUND - 14 or pivot[1] > GROUND - 14:
             continue
         P, A, B = cv.wp(pivot), cv.wp(a), cv.wp(b)
+        # a fan is a smear, a *sail* is a bug: in a jump the foot travels 300 px
+        # between two frames and the wedge hung off the knee covers the fighter
+        # and half the floor. The fan is capped at a forearm's length and faded
+        # by how far over the cap the limb went, so a leap leaves a streak at
+        # the joint instead of a pane of glass.
+        cap = 104.0 * cv.unit()
+        reach = max(math.hypot(A[0] - P[0], A[1] - P[1]),
+                    math.hypot(B[0] - P[0], B[1] - P[1]))
+        if reach > cap:
+            q = cap / reach
+            A = (P[0] + (A[0] - P[0]) * q, P[1] + (A[1] - P[1]) * q)
+            B = (P[0] + (B[0] - P[0]) * q, P[1] + (B[1] - P[1]) * q)
+            k *= q * q
         cv.polygon([P, A, B], tint, alpha=int(64 * k * thin))
         cv.polygon([P, B, ((B[0] + P[0]) * 0.5, (B[1] + P[1]) * 0.5)], tint,
                    alpha=int(40 * k * thin))
@@ -1020,9 +1044,15 @@ def draw_impacts(cv: Canvas, impacts, t: float, overlay_flash: list,
             halo = (26.0 + 44.0 * size) * u * (0.45 + 0.55 * grow) * (1.0 - 0.4 * k)
             box = (cx - halo * 1.6, cy - halo * 1.6, cx + halo * 1.6, cy + halo * 1.6)
             ov = Overlay(cv, box)
-            for f, a in ((1.55, 30), (1.05, 46), (0.58, 96)):
+            # a *gradient*, not three discs: on the night plate a stack of three
+            # flat alphas shows its own edges and the bloom reads as a grey
+            # target painted on the sky. Twelve thin shells accumulate into a
+            # smooth falloff with no visible step anywhere.
+            for i in range(12):
+                f = 1.55 - 1.20 * (i / 11.0) ** 1.25
                 rr = max(1.0, halo * f)
-                ov.ellipse((cx - rr, cy - rr, cx + rr, cy + rr), (255, 243, 212, a))
+                ov.ellipse((cx - rr, cy - rr, cx + rr, cy + rr),
+                           (255, 243, 212, 9 if i < 9 else 14))
             ov.flush()
             burst_spikes(cv, cx, cy, u, size, k, e["t"] + 0.3,
                          n=15 if e.get("sparks") else 20)
@@ -1370,7 +1400,7 @@ def _draw_beam(cv: Canvas, scene, p: dict, t: float, cam: dict) -> None:
     else:
         tx, ty = hx + 400.0, hy
     _sp.draw_beam(cv, (hx, hy), (tx, ty), int(round(t * 24)), power=min(1.0, amt),
-                  radius=26.0)
+                  radius=32.0)
     # the pressure wave on the floor under the beam
     u = cv.unit()
     for i in range(3):

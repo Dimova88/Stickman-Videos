@@ -106,12 +106,13 @@ def assemble(script: dict, set_name: str = "mountain") -> dict:
     dusts: list[float] = []
     texts: list[dict] = []
 
-    def impact(t, kind, size=1.0, by="red", on=None, dmg=0.0, sparks=False):
-        dx = 1.0 if by == "red" else -1.0
+    def impact(t, kind, size=1.0, by=None, on=None, dmg=0.0, sparks=False):
+        by = by or hero.name
+        dx = 1.0 if by == hero.name else -1.0
         impacts.append({"t": t, "kind": kind, "size": size, "by": by,
                         "on": on, "dx": dx, "sparks": sparks,
-                        "dmg_red": dmg if on == "red" else 0.0,
-                        "dmg_blue": dmg if on and on != "red" else 0.0,
+                        "dmg_red": dmg if on == hero.name else 0.0,
+                        "dmg_blue": dmg if on and on != hero.name else 0.0,
                         "anchor": "blade" if sparks else None})
 
     def dust(t):
@@ -193,7 +194,7 @@ def assemble(script: dict, set_name: str = "mountain") -> dict:
         kind, sparks = k
         on = beat.defender if beat.outcome != "parry" else beat.attacker
         by = beat.attacker if beat.outcome != "parry" else beat.defender
-        impact(beat.t, kind, beat.size, by=by or "red", on=on, sparks=sparks,
+        impact(beat.t, kind, beat.size, by=by or hero.name, on=on, sparks=sparks,
                dmg=100.0 if beat.outcome == "lethal" else 18.0 * beat.size)
 
     compile_beats(beats, {t.name: t for t in cast}, guard=GUARD,
@@ -325,9 +326,9 @@ def assemble(script: dict, set_name: str = "mountain") -> dict:
     engagements = []
     for b in beats:
         opp = None
-        if b.attacker == "red":
+        if b.attacker == hero.name:
             opp = b.defender
-        elif b.defender == "red":
+        elif b.defender == hero.name:
             opp = b.attacker
         if opp:
             # the window is the contact, not the whole beat: during the wind-up
@@ -393,7 +394,7 @@ def assemble(script: dict, set_name: str = "mountain") -> dict:
                 # 34 px on the timeline is 8 px on the screen unless counted
                 hf = 1 if hero.facing_at(tt) >= 0 else -1
                 of = 1 if other.facing_at(tt) >= 0 else -1
-                ax = hero.sample(tt)[1] + push_at(impacts, "red", tt, hf)
+                ax = hero.sample(tt)[1] + push_at(impacts, hero.name, tt, hf)
                 dx = other.sample(tt)[1] + push_at(impacts, other.name, tt, of)
                 gap = dx - ax
                 if abs(gap) >= BODY_GAP - 0.5:
@@ -493,12 +494,11 @@ def assemble(script: dict, set_name: str = "mountain") -> dict:
 
     #: the powers are a *timeline*, not a switch: what is on screen, when, and
     #: how much of it. The renderer only samples this.
-    powers = list(script.get("powers", ()))
-    if callable(powers):
-        powers = list(powers(named_tracks))
-    destruction = list(script.get("destruction", ()))
-    if callable(destruction):
-        destruction = list(destruction(named_tracks))
+    powers = script.get("powers", ())
+    powers = list(powers(named_tracks)) if callable(powers) else list(powers)
+    destruction = script.get("destruction", ())
+    destruction = (list(destruction(named_tracks)) if callable(destruction)
+                   else list(destruction))
     debris = DebrisField(destruction, ground=GROUND, duration=DURATION)
 
     named = {tr.name: tr for tr in tracks}
@@ -511,6 +511,7 @@ def assemble(script: dict, set_name: str = "mountain") -> dict:
             "texts": texts, "cuts": cuts,
             "blade": bool(script.get("blade", True)),
             "ink": tuple(script.get("ink", ())),
+            "gates": script.get("gates", {}),
             "clock": Clock(impacts), "squash_at": squash_at,
             "push_at": push_at, "compress": compress,
             "shots": script["shots"]}

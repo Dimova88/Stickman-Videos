@@ -206,7 +206,7 @@ def local_crescent(cv, hilt, angles, length: float, power: float = 1.0,
         # a crescent is a *band*: it starts as a whisker at the tail and widens
         # toward the blade. Sizing the inner radius as a fraction of the blade
         # (rather than a fraction of the band) is what turned it into a fan.
-        band = length * (0.035 + 0.115 * u)
+        band = length * (0.022 + 0.070 * u)
         r_in = max(0.0, r_out - band)
         outer.append(cv.wp((hx + math.cos(a) * r_out, hy + math.sin(a) * r_out)))
         inner.append(cv.wp((hx + math.cos(a) * r_in, hy + math.sin(a) * r_in)))
@@ -217,7 +217,10 @@ def local_crescent(cv, hilt, angles, length: float, power: float = 1.0,
     for k in range(3):
         i0, i1 = int(k * n / 3), int((k + 1) * n / 3)
         seg = outer[i0:i1 + 1] + list(reversed(inner[i0:i1 + 1]))
-        a = int((12 + 46 * (k + 1) / 3) * power)
+        # the smear is *air*: on the night plate a pale polygon the size of the
+        # sky stops being a slash and becomes a sail, so the band is thin and
+        # the alpha stays low — the bright leading edge below does the reading
+        a = int((8 + 26 * (k + 1) / 3) * power)
         cv.polygon(seg, colour, alpha=a)
     # the leading edge is the steel itself: bright, and it ends at the hilt
     cv.line(outer[-1], cv.wp(hilt), max(1.2, 2.0 * cv.unit()), colour,

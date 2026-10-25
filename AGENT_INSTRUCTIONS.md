@@ -235,7 +235,9 @@ pillars above are the contract; the names below are this codebase's translation.
 | Biomechanics | `engine/biomechanics.py` (whip lag, squash, localised hits) |
 | Camera direction | `fight/camera.py` (shots, spring, shake) + `engine/camera_director.py` (time-ramp, pacing) |
 | Score | `fight/sound.py` (synthesis) + `engine/soundtrack_engine.py` (act plan) |
-| Beat sheet | `fight/beats.py` (`CombatBeat`, `PRESETS`, `compile_beats`), `fight/steel.py` |
+| Beat sheet | `fight/beats.py` (`CombatBeat`, `PRESETS`, `compile_beats`) |
+| Film as data | `fight/steelkit.py` (`assemble(script, set_name)`), `fight/steel_script.py`, `fight/duel_script.py`, `BATTLE_SCRIPT.md` |
+| Plates and grades | `assets/*.png`, `tools/make_night_plates.py` (the blue-hour grade) |
 | Turning | `fight/rig.py` (`facing_keys`, hysteresis) |
 | Renderer | `fight/clashfilm.py` (`render_frame`, casing, painter sort) |
 | Gates | `tools/audit_film.py`, `tools/audit_rig.py` |

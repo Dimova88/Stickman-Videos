@@ -139,7 +139,7 @@ def draw_beam(cv, origin, target, frame_idx: int, power: float = 1.0,
            oy + dy / dist * (dist + radius * 3.4))
     g = beam_geometry(origin, far, frame_idx, radius=radius * power)
     shell = [cv.wp(p) for p in g["shell"]]
-    cv.polygon(shell, colour, alpha=int(52 * power))
+    cv.polygon(shell, colour, alpha=int(70 * power))
     cv.polyline(shell + [shell[0]], max(1.5, 2.0 * u), (214, 246, 255),
                 alpha=int(120 * power))
     # the core: a straight bar of white, thin enough to stay a bar

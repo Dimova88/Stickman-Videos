@@ -216,8 +216,10 @@ def marks(scene) -> list:
             out.append({"t": e["t"] + 0.02, "x": e["x"], "r": 26.0,
                         "kind": "crater"})
     for t0 in scene.get("dusts", []):
-        tr = scene["red"] if scene["red"].sample(t0)[0].get("hip", 99) < 70 \
-            else scene["blue"]
+        # whoever is nearest the floor at that moment made the dust: a scene
+        # without a "red" (any film whose hero has another name) still works
+        tracks = scene.get("tracks") or (scene["red"], scene["blue"])
+        tr = min(tracks, key=lambda q: q.sample(t0)[0].get("hip", 99))
         out.append({"t": t0, "x": tr.sample(t0)[1], "r": 22.0, "kind": "crater"})
     scene["_marks"] = out
     return out
